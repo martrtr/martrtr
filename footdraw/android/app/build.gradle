@@ -1,0 +1,13 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'io.openai.footdraw'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'io.openai.footdraw'
+        minSdk 26
+        targetSdk 36
+        versionCode 10
+        versionName '1.0'
+    }
+}

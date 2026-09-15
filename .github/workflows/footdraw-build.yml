@@ -1,0 +1,31 @@
+name: FootDraw Build
+on:
+  push:
+    branches: [ 'chatgpt/footdraw-build-20260916' ]
+  workflow_dispatch:
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android API 36
+        run: yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0' || true
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build APK
+        working-directory: footdraw/android
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Stage
+        run: |
+          mkdir -p dist
+          cp footdraw/android/app/build/outputs/apk/debug/app-debug.apk dist/FootDraw-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: footdraw-android
+          path: dist/FootDraw-Android.apk
+          if-no-files-found: error
