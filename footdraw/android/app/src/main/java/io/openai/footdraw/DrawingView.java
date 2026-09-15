@@ -20,7 +20,7 @@ public final class DrawingView extends View implements NetClient.Listener {
     private boolean blockedUntilUp=false;
     private float lastX,lastY;
     private long lastMove;
-    private volatile int bgColor=0xFF000000, brushColor=0xFFEBEEF4;
+    private volatile int bgColor=0xFF13161B, brushColor=0xFFEBEEF4;
     private volatile boolean landscape=false, clipEnabled=false;
     private volatile float clipL=0f,clipT=0f,clipR=1f,clipB=1f;
 
@@ -32,34 +32,33 @@ public final class DrawingView extends View implements NetClient.Listener {
     }
 
     @Override protected void onDraw(Canvas c){
-        c.drawColor(bgColor); float w=getWidth(); if(w<=0)return;
+        c.drawColor(bgColor);float w=getWidth();if(w<=0)return;
         HashMap<String,PointF> prev=new HashMap<>();
         synchronized(pts){
             for(Store.Event e:pts){
-                float x=(float)((e.x-vx)*w), y=(float)((e.y-vy)*w); PointF q=prev.get(e.stroke);
+                float x=(float)((e.x-vx)*w),y=(float)((e.y-vy)*w);PointF q=prev.get(e.stroke);
                 if(q!=null){paint.setColor(0xFF000000|(e.color&0xFFFFFF));c.drawLine(q.x,q.y,x,y,paint);}
-                if("U".equals(e.kind))prev.remove(e.stroke); else prev.put(e.stroke,new PointF(x,y));
+                if("U".equals(e.kind))prev.remove(e.stroke);else prev.put(e.stroke,new PointF(x,y));
             }
         }
         if(clipEnabled){float h=getHeight();RectF r=new RectF(clipL*w,clipT*h,clipR*w,clipB*h);c.drawRect(r,clipPaint);}
     }
 
-    private boolean inside(float x,float y){ if(!clipEnabled)return true; float w=getWidth(),h=getHeight(); if(w<=0||h<=0)return false; float nx=x/w,ny=y/h;return nx>=clipL&&nx<=clipR&&ny>=clipT&&ny<=clipB; }
-    private float clampX(float x){ if(!clipEnabled)return x;return Math.max(clipL*getWidth(),Math.min(clipR*getWidth(),x)); }
-    private float clampY(float y){ if(!clipEnabled)return y;return Math.max(clipT*getHeight(),Math.min(clipB*getHeight(),y)); }
+    private boolean inside(float x,float y){if(!clipEnabled)return true;float w=getWidth(),h=getHeight();if(w<=0||h<=0)return false;float nx=x/w,ny=y/h;return nx>=clipL&&nx<=clipR&&ny>=clipT&&ny<=clipB;}
+    private float clampX(float x){if(!clipEnabled)return x;return Math.max(clipL*getWidth(),Math.min(clipR*getWidth(),x));}
+    private float clampY(float y){if(!clipEnabled)return y;return Math.max(clipT*getHeight(),Math.min(clipB*getHeight(),y));}
 
     @Override public boolean onTouchEvent(MotionEvent e){
-        if(getWidth()<=0)return true; int a=e.getActionMasked();
+        if(getWidth()<=0)return true;int a=e.getActionMasked();
         if(a==MotionEvent.ACTION_DOWN){
-            blockedUntilUp=!inside(e.getX(),e.getY()); if(blockedUntilUp)return true;
-            activeStroke=UUID.randomUUID().toString().replace("-",""); strokeVX=vx;strokeVY=vy;
-            addPoint("D",e.getX(),e.getY(),e.getPressure());lastX=e.getX();lastY=e.getY();lastMove=SystemClock.uptimeMillis();return true;
+            blockedUntilUp=!inside(e.getX(),e.getY());if(blockedUntilUp)return true;
+            activeStroke=String.format(Locale.US,"c%06x_%s",brushColor&0xFFFFFF,UUID.randomUUID().toString().replace("-",""));
+            strokeVX=vx;strokeVY=vy;addPoint("D",e.getX(),e.getY(),e.getPressure());lastX=e.getX();lastY=e.getY();lastMove=SystemClock.uptimeMillis();return true;
         }
         if(a==MotionEvent.ACTION_MOVE){
             if(blockedUntilUp||activeStroke==null)return true;
-            int hc=e.getHistorySize();
-            for(int i=0;i<hc;i++)processMove(e.getHistoricalX(i),e.getHistoricalY(i),e.getHistoricalPressure(i),e.getHistoricalEventTime(i));
-            processMove(e.getX(),e.getY(),e.getPressure(),e.getEventTime()); return true;
+            int hc=e.getHistorySize();for(int i=0;i<hc;i++)processMove(e.getHistoricalX(i),e.getHistoricalY(i),e.getHistoricalPressure(i),e.getHistoricalEventTime(i));
+            processMove(e.getX(),e.getY(),e.getPressure(),e.getEventTime());return true;
         }
         if(a==MotionEvent.ACTION_UP||a==MotionEvent.ACTION_CANCEL){
             if(activeStroke!=null){float x=clampX(e.getX()),y=clampY(e.getY());addPoint("U",x,y,e.getPressure());activeStroke=null;}
@@ -78,17 +77,16 @@ public final class DrawingView extends View implements NetClient.Listener {
     }
 
     private void addPoint(String kind,float px,float py,float pressure){
-        double x=strokeVX+px/getWidth(), y=strokeVY+py/getWidth(), p=Math.max(.05,pressure);
-        Store.Event ev=store.add(activeStroke,kind,x,y,p,brushColor&0xFFFFFF); synchronized(pts){pts.add(ev);} postInvalidateOnAnimation();
+        double x=strokeVX+px/getWidth(),y=strokeVY+py/getWidth(),p=Math.max(.05,pressure);
+        Store.Event ev=store.add(activeStroke,kind,x,y,p,brushColor&0xFFFFFF);synchronized(pts){pts.add(ev);}postInvalidateOnAnimation();
     }
 
     private void applyPendingView(){if(hasPendingView&&activeStroke==null){vx=pendingVX;vy=pendingVY;hasPendingView=false;postInvalidateOnAnimation();}}
     @Override public void onView(double x,double y){if(activeStroke!=null){pendingVX=x;pendingVY=y;hasPendingView=true;}else{vx=x;vy=y;postInvalidateOnAnimation();}}
     @Override public void onClear(long epoch){synchronized(pts){pts.clear();}activeStroke=null;blockedUntilUp=false;hasPendingView=false;postInvalidateOnAnimation();}
-
     @Override public void onConfig(int bg,int brush,boolean land,boolean clip,float l,float t,float r,float b){
-        bgColor=0xFF000000|(bg&0xFFFFFF);brushColor=0xFF000000|(brush&0xFFFFFF);clipEnabled=clip;clipL=l;clipT=t;clipR=r;clipB=b;
-        if(landscape!=land){landscape=land;post(()->{Context c=getContext();if(c instanceof Activity){((Activity)c).setRequestedOrientation(land?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);}});}
+        bgColor=0xFF000000|(bg&0xFFFFFF);brushColor=0xFF000000|(brush&0xFFFFFF);clipEnabled=clip;clipL=Math.max(0f,Math.min(1f,l));clipT=Math.max(0f,Math.min(1f,t));clipR=Math.max(clipL,Math.min(1f,r));clipB=Math.max(clipT,Math.min(1f,b));
+        if(landscape!=land){landscape=land;post(()->{Context c=getContext();if(c instanceof Activity)((Activity)c).setRequestedOrientation(land?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);});}
         postInvalidateOnAnimation();
     }
 }
