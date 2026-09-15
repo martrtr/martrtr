@@ -12,7 +12,7 @@ public final class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON|WindowManager.LayoutParams.FLAG_FULLSCREEN);
         store=new Store(this); drawing=new DrawingView(this,store); setContentView(drawing); getWindow().getDecorView().post(this::hideSystemUi);
         if(Build.VERSION.SDK_INT>=33)getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT,()->{});
-        AudioBoost.prepare(this); audio=new AudioClient(this);audio.start(); kiosk=new RootKiosk();kiosk.start(this);
+        AudioBoost.prepare(this); audio=new AudioClient(this,drawing);audio.start(); kiosk=new RootKiosk();kiosk.start(this);
         drawing.post(()->{net=new NetClient(this,store);net.start(Math.max(1,drawing.getWidth()),Math.max(1,drawing.getHeight()),drawing);});
     }
     private void hideSystemUi(){ try { View d=getWindow().getDecorView(); if(Build.VERSION.SDK_INT>=30){getWindow().setDecorFitsSystemWindows(false);WindowInsetsController c=d.getWindowInsetsController();if(c!=null){c.hide(WindowInsets.Type.statusBars()|WindowInsets.Type.navigationBars());c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);}} else d.setSystemUiVisibility(5894|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);}catch(Exception ignored){} }
