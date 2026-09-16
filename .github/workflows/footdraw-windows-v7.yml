@@ -4,7 +4,7 @@ on:
   push:
     branches: [chatgpt/footdraw-build-20260916]
     paths:
-      - 'footdraw/windows-v7-src.tar.gz.b64'
+      - 'footdraw/windows-v7-src.part*'
       - '.github/workflows/footdraw-windows-v7.yml'
   workflow_dispatch:
 
@@ -19,7 +19,7 @@ jobs:
       - name: Unpack source
         run: |
           mkdir -p build/windows
-          base64 -d footdraw/windows-v7-src.tar.gz.b64 | tar xzf - -C build/windows
+          cat footdraw/windows-v7-src.part00 footdraw/windows-v7-src.part01 footdraw/windows-v7-src.part02 footdraw/windows-v7-src.part03 footdraw/windows-v7-src.part04 | base64 -d | tar xzf - -C build/windows
       - name: Generate icon and PE resource
         working-directory: build/windows
         run: |
