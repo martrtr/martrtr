@@ -16,11 +16,18 @@ public final class DrawingView extends View implements NetClient.Listener {
 
     private volatile double vx,vy;
     private String activeStroke;
-    private boolean fingerDown=false;
+    private int trackedPointerId=-1;
     private float lastX,lastY;
     private long lastMove;
     private boolean havePrevSample=false,prevInside=false;
     private float prevSampleX,prevSampleY;
+
+    private static final class PointerSample {
+        float x,y,pressure;
+        long time;
+        PointerSample(float x,float y,float pressure,long time){this.x=x;this.y=y;this.pressure=pressure;this.time=time;}
+    }
+    private final HashMap<Integer,PointerSample> lastPointerSamples=new HashMap<>();
 
     private volatile int bgColor=0xFF000000, brushColor=0xFFEBEEF4;
     private volatile boolean landscape=false, clipEnabled=false;
@@ -66,19 +73,73 @@ public final class DrawingView extends View implements NetClient.Listener {
         return new PointF[]{new PointF(x0+u0*dx,y0+u0*dy),new PointF(x0+u1*dx,y0+u1*dy)};
     }
 
+    private void rememberPointers(MotionEvent e){
+        long when=e.getEventTime();
+        for(int i=0;i<e.getPointerCount();i++){
+            int id=e.getPointerId(i);
+            lastPointerSamples.put(id,new PointerSample(e.getX(i),e.getY(i),e.getPressure(i),when));
+        }
+    }
+
+    private void adoptPointer(MotionEvent e,int index){
+        trackedPointerId=e.getPointerId(index);
+        activeStroke=null;
+        PointerSample prev=lastPointerSamples.get(trackedPointerId);
+        if(prev!=null){havePrevSample=true;prevSampleX=prev.x;prevSampleY=prev.y;prevInside=inside(prev.x,prev.y);}else havePrevSample=false;
+        processSample(e.getX(index),e.getY(index),e.getPressure(index),e.getEventTime());
+    }
+
+    private void finishTracked(float pressure){
+        if(activeStroke!=null){addPoint("U",lastX,lastY,pressure);activeStroke=null;}
+        trackedPointerId=-1;havePrevSample=false;
+    }
+
     @Override public boolean onTouchEvent(MotionEvent e){
-        if(getWidth()<=0||getHeight()<=0)return true;int a=e.getActionMasked();
-        if(a==MotionEvent.ACTION_DOWN){
-            fingerDown=true;activeStroke=null;havePrevSample=false;processSample(e.getX(),e.getY(),e.getPressure(),e.getEventTime());return true;
+        if(getWidth()<=0||getHeight()<=0)return true;
+        int a=e.getActionMasked();
+
+        if(a==MotionEvent.ACTION_DOWN||a==MotionEvent.ACTION_POINTER_DOWN){
+            int idx=e.getActionIndex();int id=e.getPointerId(idx);
+            float x=e.getX(idx),y=e.getY(idx),p=e.getPressure(idx);
+            if(trackedPointerId<0&&inside(x,y))adoptPointer(e,idx);
+            lastPointerSamples.put(id,new PointerSample(x,y,p,e.getEventTime()));
+            return true;
         }
-        if(a==MotionEvent.ACTION_MOVE&&fingerDown){
-            int hc=e.getHistorySize();for(int i=0;i<hc;i++)processSample(e.getHistoricalX(i),e.getHistoricalY(i),e.getHistoricalPressure(i),e.getHistoricalEventTime(i));
-            processSample(e.getX(),e.getY(),e.getPressure(),e.getEventTime());return true;
+
+        if(a==MotionEvent.ACTION_MOVE){
+            if(trackedPointerId>=0){
+                int idx=e.findPointerIndex(trackedPointerId);
+                if(idx>=0){
+                    int hc=e.getHistorySize();
+                    for(int h=0;h<hc;h++)processSample(e.getHistoricalX(idx,h),e.getHistoricalY(idx,h),e.getHistoricalPressure(idx,h),e.getHistoricalEventTime(h));
+                    processSample(e.getX(idx),e.getY(idx),e.getPressure(idx),e.getEventTime());
+                }else finishTracked(1f);
+            }else{
+                // No drawing pointer yet: outside touches are completely ignored.
+                // The first pointer that actually enters the allowed area becomes the drawing pointer.
+                for(int i=0;i<e.getPointerCount();i++){
+                    if(inside(e.getX(i),e.getY(i))){adoptPointer(e,i);break;}
+                }
+            }
+            rememberPointers(e);
+            return true;
         }
-        if((a==MotionEvent.ACTION_UP||a==MotionEvent.ACTION_CANCEL)&&fingerDown){
-            if(a==MotionEvent.ACTION_UP)processSample(e.getX(),e.getY(),e.getPressure(),e.getEventTime());
-            if(activeStroke!=null){addPoint("U",lastX,lastY,e.getPressure());activeStroke=null;}
-            fingerDown=false;havePrevSample=false;return true;
+
+        if(a==MotionEvent.ACTION_POINTER_UP){
+            int idx=e.getActionIndex();int id=e.getPointerId(idx);
+            if(id==trackedPointerId)finishTracked(e.getPressure(idx));
+            lastPointerSamples.remove(id);
+            return true;
+        }
+
+        if(a==MotionEvent.ACTION_UP){
+            int idx=e.getActionIndex();int id=e.getPointerId(idx);
+            if(id==trackedPointerId){processSample(e.getX(idx),e.getY(idx),e.getPressure(idx),e.getEventTime());finishTracked(e.getPressure(idx));}
+            lastPointerSamples.clear();trackedPointerId=-1;havePrevSample=false;return true;
+        }
+
+        if(a==MotionEvent.ACTION_CANCEL){
+            finishTracked(1f);lastPointerSamples.clear();return true;
         }
         return true;
     }
@@ -112,7 +173,7 @@ public final class DrawingView extends View implements NetClient.Listener {
     }
 
     @Override public void onView(double x,double y){vx=x;vy=y;postInvalidateOnAnimation();}
-    @Override public void onClear(long epoch){synchronized(pts){pts.clear();}activeStroke=null;fingerDown=false;havePrevSample=false;postInvalidateOnAnimation();}
+    @Override public void onClear(long epoch){synchronized(pts){pts.clear();}activeStroke=null;trackedPointerId=-1;havePrevSample=false;lastPointerSamples.clear();postInvalidateOnAnimation();}
 
     @Override public void onConfig(int bg,int brush,boolean land,boolean clip,float l,float t,float r,float b){
         bgColor=0xFF000000|(bg&0xFFFFFF);brushColor=0xFF000000|(brush&0xFFFFFF);clipEnabled=clip;clipL=Math.max(0f,Math.min(1f,l));clipT=Math.max(0f,Math.min(1f,t));clipR=Math.max(clipL,Math.min(1f,r));clipB=Math.max(clipT,Math.min(1f,b));
