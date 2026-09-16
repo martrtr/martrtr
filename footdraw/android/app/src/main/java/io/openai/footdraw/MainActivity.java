@@ -53,7 +53,10 @@ public final class MainActivity extends Activity {
         runOnUiThread(()->{if(gyro!=null)gyro.setEnabled(on);});
     }
     void recalibrateGyro(){
-        runOnUiThread(()->{if(gyro!=null)gyro.recalibrate();});
+        runOnUiThread(()->{
+            if(drawing!=null)drawing.recenterGyroCursor();
+            if(gyro!=null)gyro.recalibrate();
+        });
     }
 
     private void hideSystemUi(){
