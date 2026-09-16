@@ -45,8 +45,6 @@ public final class RootKiosk {
                     "G4=$(settings get secure three_finger_gesture 2>/dev/null); "+
                     "PALM=/sys/class/touch/touch_dev/palm_sensor; PALM0=''; [ -r \"$PALM\" ] && PALM0=$(cat \"$PALM\" 2>/dev/null); "+
                     "HELP=/data/local/tmp/footdraw-touch; cp '"+helperPath+"' \"$HELP\" >/dev/null 2>&1 || true; chmod 755 \"$HELP\" >/dev/null 2>&1 || true; "+
-                    // Save exactly what the panel used before FootDraw. Xiaomi MT6895 exposes
-                    // these modes through /dev/xiaomi-touch. Empty values mean the helper is not supported.
                     "GM=$($HELP get 0 2>/dev/null); ACT=$($HELP get 1 2>/dev/null); UP=$($HELP get 2 2>/dev/null); TOL=$($HELP get 3 2>/dev/null); EDGE=$($HELP get 7 2>/dev/null); "+
                     "disable3(){ "+
                     "settings put system three_finger_gesture 0 >/dev/null 2>&1; "+
@@ -54,8 +52,6 @@ public final class RootKiosk {
                     "settings put system three_gesture_long_press none >/dev/null 2>&1; "+
                     "settings put system three_finger_screenshot 0 >/dev/null 2>&1; "+
                     "settings put secure three_finger_gesture 0 >/dev/null 2>&1; }; "+
-                    // Foot Mode: disable palm suppression, disable edge filtering, and use the same
-                    // high-touch settings used by Xiaomi high-polling/game implementations.
                     "footMode(){ "+
                     "if [ -e \"$PALM\" ]; then echo 0 > \"$PALM\" 2>/dev/null || true; fi; "+
                     "if [ -x \"$HELP\" ]; then "+
@@ -90,7 +86,9 @@ public final class RootKiosk {
         if(!active)return;
         active=false;
         new Thread(()->{
-            try{if(watchdog!=null)watchdog.destroy();}catch(Exception ignored){}
+            // Do not destroy the root watchdog here: it owns the original touch-mode snapshot.
+            // MainActivity kills the app process shortly after this call; the watchdog notices
+            // /proc/<pid> disappearing, exits its loop and restores every saved Xiaomi touch mode.
             try{new ProcessBuilder("su","-c","cmd statusbar send-disable-flag none; cmd statusbar collapse").start().waitFor();}catch(Exception ignored){}
         },"FootDraw-RootRestore").start();
     }
