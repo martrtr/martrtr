@@ -25,8 +25,8 @@ public final class DrawingView extends View implements NetClient.Listener {
         boolean havePrev,prevInside;
         float prevX,prevY;
     }
-    // Important: only pointers that are currently relevant to the drawable area live here.
-    // Touches that stay outside the selected area are never registered as drawing pointers.
+    // Only pointers that are actually useful for drawing live here.
+    // Contacts outside the selected area, and Android-classified palms, are never drawing pointers.
     private final HashMap<Integer,PointerState> pointers=new HashMap<>();
 
     private volatile int bgColor=0xFF000000, brushColor=0xFFEBEEF4;
@@ -70,10 +70,10 @@ public final class DrawingView extends View implements NetClient.Listener {
         float w=getWidth(),h=getHeight();if(w<=0||h<=0)return false;
         float nx=x/w,ny=y/h;return nx>=clipL&&nx<=clipR&&ny>=clipT&&ny<=clipB;
     }
-    private float leftPx(){return clipL*getWidth();}
-    private float rightPx(){return clipR*getWidth();}
-    private float topPx(){return clipT*getHeight();}
-    private float bottomPx(){return clipB*getHeight();}
+    private boolean isPalm(MotionEvent e,int i){
+        try{return Build.VERSION.SDK_INT>=33&&e.getToolType(i)==MotionEvent.TOOL_TYPE_PALM;}catch(Throwable ignored){return false;}
+    }
+    private float leftPx(){return clipL*getWidth();}private float rightPx(){return clipR*getWidth();}private float topPx(){return clipT*getHeight();}private float bottomPx(){return clipB*getHeight();}
 
     private PointF[] clipSegment(float x0,float y0,float x1,float y1){
         if(!clipEnabled)return new PointF[]{new PointF(x0,y0),new PointF(x1,y1)};
@@ -87,19 +87,14 @@ public final class DrawingView extends View implements NetClient.Listener {
         return new PointF[]{new PointF(x0+u0*dx,y0+u0*dy),new PointF(x0+u1*dx,y0+u1*dy)};
     }
 
-    private PointerState createInsidePointer(int id){
-        PointerState s=new PointerState();pointers.put(id,s);return s;
-    }
+    private PointerState createInsidePointer(int id){PointerState s=new PointerState();pointers.put(id,s);return s;}
 
     private void beginStroke(PointerState s,float x,float y,float pressure,long when){
         s.color=brushColor&0xFFFFFF;
         s.stroke=String.format(Locale.US,"c%06x_%s",s.color,UUID.randomUUID().toString().replace("-",""));
         addPoint(s,"D",x,y,pressure);s.lastX=x;s.lastY=y;s.lastMove=when;
     }
-
-    private void finishStroke(PointerState s,float pressure){
-        if(s!=null&&s.stroke!=null){addPoint(s,"U",s.lastX,s.lastY,pressure);s.stroke=null;}
-    }
+    private void finishStroke(PointerState s,float pressure){if(s!=null&&s.stroke!=null){addPoint(s,"U",s.lastX,s.lastY,pressure);s.stroke=null;}}
 
     private void processSample(PointerState s,float x,float y,float pressure,long when){
         boolean in=inside(x,y);long now=Math.max(when,SystemClock.uptimeMillis());
@@ -121,15 +116,8 @@ public final class DrawingView extends View implements NetClient.Listener {
 
     private PointerState processPointerSample(int id,float x,float y,float pressure,long when){
         PointerState s=pointers.get(id);
-        if(s==null){
-            // Outside touches are intentionally invisible to the drawing subsystem.
-            // A pointer only becomes drawable at the first sample that is actually inside.
-            if(!inside(x,y))return null;
-            s=createInsidePointer(id);
-        }
+        if(s==null){if(!inside(x,y))return null;s=createInsidePointer(id);}
         processSample(s,x,y,pressure,when);
-        // The moment it leaves the selected area and the stroke is finished, forget it again.
-        // If the same finger later re-enters, it will start a fresh stroke from that entry point.
         if(!inside(x,y)&&s.stroke==null){pointers.remove(id);return null;}
         return s;
     }
@@ -141,6 +129,7 @@ public final class DrawingView extends View implements NetClient.Listener {
 
         if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_POINTER_DOWN){
             int i=e.getActionIndex();int id=e.getPointerId(i);
+            if(isPalm(e,i)){PointerState old=pointers.remove(id);finishStroke(old,e.getPressure(i));return true;}
             processPointerSample(id,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());
             return true;
         }
@@ -149,6 +138,7 @@ public final class DrawingView extends View implements NetClient.Listener {
             int hc=e.getHistorySize();
             for(int i=0;i<e.getPointerCount();i++){
                 int id=e.getPointerId(i);
+                if(isPalm(e,i)){PointerState old=pointers.remove(id);finishStroke(old,e.getPressure(i));continue;}
                 PointerState s=pointers.get(id);
                 for(int h=0;h<hc;h++){
                     float x=e.getHistoricalX(i,h),y=e.getHistoricalY(i,h),p=e.getHistoricalPressure(i,h);long when=e.getHistoricalEventTime(h);
@@ -166,7 +156,9 @@ public final class DrawingView extends View implements NetClient.Listener {
 
         if(action==MotionEvent.ACTION_POINTER_UP||action==MotionEvent.ACTION_UP){
             int i=e.getActionIndex();int id=e.getPointerId(i);PointerState s=pointers.get(id);
-            if(s!=null){processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());finishStroke(s,e.getPressure(i));pointers.remove(id);}
+            if(!isPalm(e,i)&&s!=null){processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());finishStroke(s,e.getPressure(i));}
+            else finishStroke(s,e.getPressure(i));
+            pointers.remove(id);
             if(action==MotionEvent.ACTION_UP)pointers.clear();return true;
         }
 
