@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <application android:theme="@style/AppTheme" android:label="FootDraw" android:icon="@drawable/app_icon_v8" android:roundIcon="@drawable/app_icon_v8" android:allowBackup="false" android:supportsRtl="true">
-        <activity android:name=".MainActivity" android:screenOrientation="unspecified" android:configChanges="orientation|screenSize|keyboardHidden" android:launchMode="singleTask" android:excludeFromRecents="true" android:exported="true">
+        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:configChanges="orientation|screenSize|keyboardHidden" android:launchMode="singleTask" android:excludeFromRecents="true" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
