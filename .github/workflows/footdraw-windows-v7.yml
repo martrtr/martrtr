@@ -29,6 +29,7 @@ jobs:
           cd build/windows
           python3 patch.py
           rm patch.py
+          sed -i 's/v<-/v < -/g' mic_windows.go
           gofmt -w main_windows.go mic_windows.go net.go makeico.go
       - name: Generate shared icon and PE resource
         working-directory: build/windows
