@@ -1,4 +1,4 @@
-name: FootDraw Windows v10
+name: FootDraw Windows v11
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - 'footdraw/windows-v8-*'
       - 'footdraw/windows-v9_1-*'
       - 'footdraw/windows-v10-*'
+      - 'footdraw/windows-v11-*'
       - '.github/workflows/footdraw-windows-v7.yml'
   workflow_dispatch:
 
@@ -32,14 +33,16 @@ jobs:
           python3 patch.py
           rm patch.py
           sed -i 's/v<-/v < -/g' mic_windows.go
-      - name: Apply v9.1 audio and v10 gyro patches
+      - name: Apply v9.1 audio, v10 gyro and v11 UI patches
         run: |
           cp footdraw/windows-v9_1-audio-patch.py build/windows/audio_patch.py
           cp footdraw/windows-v10-fix.py build/windows/v10_fix.py
+          cp footdraw/windows-v11-patch.py build/windows/v11_patch.py
           cd build/windows
           python3 audio_patch.py
           python3 v10_fix.py
-          rm audio_patch.py v10_fix.py
+          python3 v11_patch.py
+          rm audio_patch.py v10_fix.py v11_patch.py
           gofmt -w main_windows.go mic_windows.go net.go makeico.go
       - name: Generate shared icon and PE resource
         working-directory: build/windows
@@ -51,9 +54,9 @@ jobs:
       - name: Build GUI exe
         working-directory: build/windows
         run: |
-          GOOS=windows GOARCH=amd64 go build -ldflags='-H=windowsgui -s -w' -o FootDraw-Operator-v10.exe .
+          GOOS=windows GOARCH=amd64 go build -ldflags='-H=windowsgui -s -w' -o FootDraw-Operator-v11.exe .
       - uses: actions/upload-artifact@v4
         with:
-          name: footdraw-windows-v10
-          path: build/windows/FootDraw-Operator-v10.exe
+          name: footdraw-windows-v11
+          path: build/windows/FootDraw-Operator-v11.exe
           if-no-files-found: error
