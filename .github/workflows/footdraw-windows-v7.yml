@@ -1,10 +1,11 @@
-name: FootDraw Windows v7
+name: FootDraw Windows v8
 
 on:
   push:
     branches: [chatgpt/footdraw-build-20260916]
     paths:
       - 'footdraw/windows-v7-src.part*'
+      - 'footdraw/windows-v8-*'
       - '.github/workflows/footdraw-windows-v7.yml'
   workflow_dispatch:
 
@@ -16,11 +17,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Unpack source
+      - name: Unpack v7 base
         run: |
           mkdir -p build/windows
           cat footdraw/windows-v7-src.part00 footdraw/windows-v7-src.part01 footdraw/windows-v7-src.part02 footdraw/windows-v7-src.part03 footdraw/windows-v7-src.part04 | base64 -d | tar xzf - -C build/windows
-      - name: Generate icon and PE resource
+      - name: Apply v8 fixes
+        run: |
+          cp footdraw/windows-v8-mic_windows.go build/windows/mic_windows.go
+          cp footdraw/windows-v8-makeico.go build/windows/makeico.go
+          cp footdraw/windows-v8-patch.py build/windows/patch.py
+          cd build/windows
+          python3 patch.py
+          rm patch.py
+          gofmt -w main_windows.go mic_windows.go net.go makeico.go
+      - name: Generate shared icon and PE resource
         working-directory: build/windows
         run: |
           go run makeico.go
@@ -30,8 +40,9 @@ jobs:
       - name: Build GUI exe
         working-directory: build/windows
         run: |
-          GOOS=windows GOARCH=amd64 go build -ldflags='-H=windowsgui -s -w' -o FootDraw-Operator-v7.exe .
+          GOOS=windows GOARCH=amd64 go build -ldflags='-H=windowsgui -s -w' -o FootDraw-Operator-v8.exe .
       - uses: actions/upload-artifact@v4
         with:
-          name: footdraw-windows-v7
-          path: build/windows/FootDraw-Operator-v7.exe
+          name: footdraw-windows-v8
+          path: build/windows/FootDraw-Operator-v8.exe
+          if-no-files-found: error
