@@ -9,8 +9,8 @@ import android.os.SystemClock;
 
 /**
  * Converts the phone's relative orientation into a 2D cursor offset.
- * The baseline is captured every time gyro mode is enabled, so the
- * operator's centre point corresponds to the foot's initial direction.
+ * The baseline is captured every time gyro mode is enabled or recentered,
+ * so the operator's centre point corresponds to the foot's current direction.
  */
 final class GyroController implements SensorEventListener, AutoCloseable {
     private final SensorManager sm;
@@ -84,11 +84,11 @@ final class GyroController implements SensorEventListener, AutoCloseable {
         // Phone is mounted in the sole with the toe toward the top of the handset.
         // Z rotation steers left/right; X rotation steers up/down. Roll around the
         // foot's long axis (Y) intentionally does not move the cursor.
-        float rawX=rvz;
+        // v11: horizontal axis is inverted so physical toe-right = cursor-right.
+        float rawX=-rvz;
         float rawY=-rvx;
         final float fx,fy;
         synchronized(this){
-            // Enough smoothing to remove foot tremor without making the cursor laggy.
             final float a=0.28f;
             smoothX+=a*(rawX-smoothX);
             smoothY+=a*(rawY-smoothY);
