@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.*;
 import android.content.pm.ActivityInfo;
 import android.graphics.*;
+import android.os.Build;
 import android.os.SystemClock;
 import android.view.*;
 import java.util.*;
@@ -15,19 +16,16 @@ public final class DrawingView extends View implements NetClient.Listener {
     private final ArrayList<Store.Event> pts=new ArrayList<>();
 
     private volatile double vx,vy;
-    private String activeStroke;
-    private int trackedPointerId=-1;
-    private float lastX,lastY;
-    private long lastMove;
-    private boolean havePrevSample=false,prevInside=false;
-    private float prevSampleX,prevSampleY;
 
-    private static final class PointerSample {
-        float x,y,pressure;
-        long time;
-        PointerSample(float x,float y,float pressure,long time){this.x=x;this.y=y;this.pressure=pressure;this.time=time;}
+    private static final class PointerState {
+        String stroke;
+        int color;
+        float lastX,lastY;
+        long lastMove;
+        boolean havePrev,prevInside;
+        float prevX,prevY;
     }
-    private final HashMap<Integer,PointerSample> lastPointerSamples=new HashMap<>();
+    private final HashMap<Integer,PointerState> pointers=new HashMap<>();
 
     private volatile int bgColor=0xFF000000, brushColor=0xFFEBEEF4;
     private volatile boolean landscape=false, clipEnabled=false;
@@ -38,7 +36,14 @@ public final class DrawingView extends View implements NetClient.Listener {
         paint.setStrokeWidth(8);paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);
         clipPaint.setStyle(Paint.Style.STROKE);clipPaint.setStrokeWidth(3);clipPaint.setColor(Color.rgb(255,190,70));
         synchronized(pts){pts.addAll(store.points());}vx=store.vx();vy=store.vy();
+        if(Build.VERSION.SDK_INT>=29){post(this::excludeSystemGestures);}
     }
+
+    private void excludeSystemGestures(){
+        if(Build.VERSION.SDK_INT<29||getWidth()<=0||getHeight()<=0)return;
+        try{setSystemGestureExclusionRects(Collections.singletonList(new Rect(0,0,getWidth(),getHeight())));}catch(Exception ignored){}
+    }
+    @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);excludeSystemGestures();}
 
     private double aspect(){int w=Math.max(1,getWidth()),h=Math.max(1,getHeight());return (double)Math.max(w,h)/(double)Math.min(w,h);}
     private double worldW(){return landscape?aspect():1.0;}
@@ -73,111 +78,90 @@ public final class DrawingView extends View implements NetClient.Listener {
         return new PointF[]{new PointF(x0+u0*dx,y0+u0*dy),new PointF(x0+u1*dx,y0+u1*dy)};
     }
 
-    private void rememberPointers(MotionEvent e){
-        long when=e.getEventTime();
-        for(int i=0;i<e.getPointerCount();i++){
-            int id=e.getPointerId(i);
-            lastPointerSamples.put(id,new PointerSample(e.getX(i),e.getY(i),e.getPressure(i),when));
+    private PointerState stateFor(int id){
+        PointerState s=pointers.get(id);
+        if(s==null){s=new PointerState();pointers.put(id,s);}return s;
+    }
+
+    private void beginStroke(PointerState s,float x,float y,float pressure,long when){
+        s.color=brushColor&0xFFFFFF;
+        s.stroke=String.format(Locale.US,"c%06x_%s",s.color,UUID.randomUUID().toString().replace("-",""));
+        addPoint(s,"D",x,y,pressure);s.lastX=x;s.lastY=y;s.lastMove=when;
+    }
+
+    private void finishStroke(PointerState s,float pressure){
+        if(s!=null&&s.stroke!=null){addPoint(s,"U",s.lastX,s.lastY,pressure);s.stroke=null;}
+    }
+
+    private void processSample(PointerState s,float x,float y,float pressure,long when){
+        boolean in=inside(x,y);long now=Math.max(when,SystemClock.uptimeMillis());
+        if(in){
+            if(s.stroke==null){
+                float sx=x,sy=y;
+                if(s.havePrev&&!s.prevInside&&clipEnabled){PointF[] seg=clipSegment(s.prevX,s.prevY,x,y);if(seg!=null){sx=seg[0].x;sy=seg[0].y;}}
+                beginStroke(s,sx,sy,pressure,now);
+                float dx=x-sx,dy=y-sy;if(dx*dx+dy*dy>=1f){addPoint(s,"M",x,y,pressure);s.lastX=x;s.lastY=y;s.lastMove=now;}
+            }else{
+                float dx=x-s.lastX,dy=y-s.lastY;if(dx*dx+dy*dy>=2.25f||now-s.lastMove>=8){addPoint(s,"M",x,y,pressure);s.lastX=x;s.lastY=y;s.lastMove=now;}
+            }
+        }else if(s.stroke!=null){
+            float ex=s.lastX,ey=s.lastY;PointF[] seg=clipSegment(s.lastX,s.lastY,x,y);if(seg!=null){ex=seg[1].x;ey=seg[1].y;}
+            float dx=ex-s.lastX,dy=ey-s.lastY;if(dx*dx+dy*dy>0.25f)addPoint(s,"M",ex,ey,pressure);s.lastX=ex;s.lastY=ey;finishStroke(s,pressure);
         }
-    }
-
-    private void adoptPointer(MotionEvent e,int index){
-        trackedPointerId=e.getPointerId(index);
-        activeStroke=null;
-        PointerSample prev=lastPointerSamples.get(trackedPointerId);
-        if(prev!=null){havePrevSample=true;prevSampleX=prev.x;prevSampleY=prev.y;prevInside=inside(prev.x,prev.y);}else havePrevSample=false;
-        processSample(e.getX(index),e.getY(index),e.getPressure(index),e.getEventTime());
-    }
-
-    private void finishTracked(float pressure){
-        if(activeStroke!=null){addPoint("U",lastX,lastY,pressure);activeStroke=null;}
-        trackedPointerId=-1;havePrevSample=false;
+        s.prevX=x;s.prevY=y;s.prevInside=in;s.havePrev=true;
     }
 
     @Override public boolean onTouchEvent(MotionEvent e){
         if(getWidth()<=0||getHeight()<=0)return true;
-        int a=e.getActionMasked();
+        try{getParent().requestDisallowInterceptTouchEvent(true);}catch(Exception ignored){}
+        int action=e.getActionMasked();
 
-        if(a==MotionEvent.ACTION_DOWN||a==MotionEvent.ACTION_POINTER_DOWN){
-            int idx=e.getActionIndex();int id=e.getPointerId(idx);
-            float x=e.getX(idx),y=e.getY(idx),p=e.getPressure(idx);
-            if(trackedPointerId<0&&inside(x,y))adoptPointer(e,idx);
-            lastPointerSamples.put(id,new PointerSample(x,y,p,e.getEventTime()));
-            return true;
+        if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_POINTER_DOWN){
+            int i=e.getActionIndex();int id=e.getPointerId(i);PointerState s=stateFor(id);
+            processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());return true;
         }
 
-        if(a==MotionEvent.ACTION_MOVE){
-            if(trackedPointerId>=0){
-                int idx=e.findPointerIndex(trackedPointerId);
-                if(idx>=0){
-                    int hc=e.getHistorySize();
-                    for(int h=0;h<hc;h++)processSample(e.getHistoricalX(idx,h),e.getHistoricalY(idx,h),e.getHistoricalPressure(idx,h),e.getHistoricalEventTime(h));
-                    processSample(e.getX(idx),e.getY(idx),e.getPressure(idx),e.getEventTime());
-                }else finishTracked(1f);
-            }else{
-                // No drawing pointer yet: outside touches are completely ignored.
-                // The first pointer that actually enters the allowed area becomes the drawing pointer.
-                for(int i=0;i<e.getPointerCount();i++){
-                    if(inside(e.getX(i),e.getY(i))){adoptPointer(e,i);break;}
-                }
+        if(action==MotionEvent.ACTION_MOVE){
+            int hc=e.getHistorySize();
+            for(int i=0;i<e.getPointerCount();i++){
+                int id=e.getPointerId(i);PointerState s=stateFor(id);
+                for(int h=0;h<hc;h++)processSample(s,e.getHistoricalX(i,h),e.getHistoricalY(i,h),e.getHistoricalPressure(i,h),e.getHistoricalEventTime(h));
+                processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());
             }
-            rememberPointers(e);
             return true;
         }
 
-        if(a==MotionEvent.ACTION_POINTER_UP){
-            int idx=e.getActionIndex();int id=e.getPointerId(idx);
-            if(id==trackedPointerId)finishTracked(e.getPressure(idx));
-            lastPointerSamples.remove(id);
-            return true;
+        if(action==MotionEvent.ACTION_POINTER_UP||action==MotionEvent.ACTION_UP){
+            int i=e.getActionIndex();int id=e.getPointerId(i);PointerState s=pointers.get(id);
+            if(s!=null){processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());finishStroke(s,e.getPressure(i));pointers.remove(id);}
+            if(action==MotionEvent.ACTION_UP)pointers.clear();return true;
         }
 
-        if(a==MotionEvent.ACTION_UP){
-            int idx=e.getActionIndex();int id=e.getPointerId(idx);
-            if(id==trackedPointerId){processSample(e.getX(idx),e.getY(idx),e.getPressure(idx),e.getEventTime());finishTracked(e.getPressure(idx));}
-            lastPointerSamples.clear();trackedPointerId=-1;havePrevSample=false;return true;
-        }
-
-        if(a==MotionEvent.ACTION_CANCEL){
-            finishTracked(1f);lastPointerSamples.clear();return true;
+        if(action==MotionEvent.ACTION_CANCEL){
+            for(PointerState s:pointers.values())finishStroke(s,1f);
+            pointers.clear();return true;
         }
         return true;
     }
 
-    private void beginStroke(float x,float y,float pressure,long when){
-        activeStroke=String.format(Locale.US,"c%06x_%s",brushColor&0xFFFFFF,UUID.randomUUID().toString().replace("-",""));
-        addPoint("D",x,y,pressure);lastX=x;lastY=y;lastMove=when;
-    }
-
-    private void processSample(float x,float y,float pressure,long when){
-        boolean in=inside(x,y);long now=Math.max(when,SystemClock.uptimeMillis());
-        if(in){
-            if(activeStroke==null){
-                float sx=x,sy=y;
-                if(havePrevSample&&!prevInside&&clipEnabled){PointF[] seg=clipSegment(prevSampleX,prevSampleY,x,y);if(seg!=null){sx=seg[0].x;sy=seg[0].y;}}
-                beginStroke(sx,sy,pressure,now);
-                float dx=x-sx,dy=y-sy;if(dx*dx+dy*dy>=1f){addPoint("M",x,y,pressure);lastX=x;lastY=y;lastMove=now;}
-            }else{
-                float dx=x-lastX,dy=y-lastY;if(dx*dx+dy*dy>=2.25f||now-lastMove>=8){addPoint("M",x,y,pressure);lastX=x;lastY=y;lastMove=now;}
-            }
-        }else if(activeStroke!=null){
-            float ex=lastX,ey=lastY;PointF[] seg=clipSegment(lastX,lastY,x,y);if(seg!=null){ex=seg[1].x;ey=seg[1].y;}
-            float dx=ex-lastX,dy=ey-lastY;if(dx*dx+dy*dy>0.25f)addPoint("M",ex,ey,pressure);addPoint("U",ex,ey,pressure);activeStroke=null;
-        }
-        prevSampleX=x;prevSampleY=y;prevInside=in;havePrevSample=true;
-    }
-
-    private void addPoint(String kind,float px,float py,float pressure){
+    private void addPoint(PointerState s,String kind,float px,float py,float pressure){
+        if(s==null||s.stroke==null)return;
         double ww=worldW(),wh=worldH();double x=vx+(px/Math.max(1,getWidth()))*ww,y=vy+(py/Math.max(1,getHeight()))*wh,p=Math.max(.05,pressure);
-        Store.Event ev=store.add(activeStroke,kind,x,y,p,brushColor&0xFFFFFF);synchronized(pts){pts.add(ev);}postInvalidateOnAnimation();
+        Store.Event ev=store.add(s.stroke,kind,x,y,p,s.color);synchronized(pts){pts.add(ev);}postInvalidateOnAnimation();
     }
 
     @Override public void onView(double x,double y){vx=x;vy=y;postInvalidateOnAnimation();}
-    @Override public void onClear(long epoch){synchronized(pts){pts.clear();}activeStroke=null;trackedPointerId=-1;havePrevSample=false;lastPointerSamples.clear();postInvalidateOnAnimation();}
+    @Override public void onClear(long epoch){synchronized(pts){pts.clear();}for(PointerState s:pointers.values())s.stroke=null;pointers.clear();postInvalidateOnAnimation();}
 
     @Override public void onConfig(int bg,int brush,boolean land,boolean clip,float l,float t,float r,float b){
         bgColor=0xFF000000|(bg&0xFFFFFF);brushColor=0xFF000000|(brush&0xFFFFFF);clipEnabled=clip;clipL=Math.max(0f,Math.min(1f,l));clipT=Math.max(0f,Math.min(1f,t));clipR=Math.max(clipL,Math.min(1f,r));clipB=Math.max(clipT,Math.min(1f,b));
-        if(landscape!=land){double oldW=worldW(),oldH=worldH(),cx=vx+oldW/2,cy=vy+oldH/2;landscape=land;double newW=worldW(),newH=worldH();vx=cx-newW/2;vy=cy-newH/2;post(()->{Context c=getContext();if(c instanceof Activity)((Activity)c).setRequestedOrientation(land?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);});}
+        if(landscape!=land){
+            double oldW=worldW(),oldH=worldH(),cx=vx+oldW/2.0,cy=vy+oldH/2.0;
+            landscape=land;
+            double newW=worldW(),newH=worldH();
+            vx=cx-newW/2.0;vy=cy-newH/2.0;
+            post(()->{Context c=getContext();if(c instanceof Activity)((Activity)c).setRequestedOrientation(land?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);});
+        }
         postInvalidateOnAnimation();
     }
 }
