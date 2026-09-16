@@ -17,6 +17,7 @@ public final class NetClient implements AutoCloseable {
     private static final int PORT=4950;
     private static final String TOKEN="f2f3a025173941f9cb1d297eba2c0469";
     private final Store store;
+    private final MainActivity activity;
     private final String deviceId;
     private volatile boolean running=true;
     private Thread thread;
@@ -27,6 +28,7 @@ public final class NetClient implements AutoCloseable {
 
     NetClient(Context c, Store s){
         store=s;
+        activity=(c instanceof MainActivity)?(MainActivity)c:null;
         SharedPreferences p=c.getSharedPreferences("footdraw",Context.MODE_PRIVATE);
         String id=p.getString("device",null);
         if(id==null){id=UUID.randomUUID().toString();p.edit().putString("device",id).apply();}
@@ -98,7 +100,13 @@ public final class NetClient implements AutoCloseable {
                     }
                     break;
                 case "MODE":
-                    if(a.length>=2&&listener!=null)listener.onMode(!a[1].equals("0"));
+                    if(a.length>=2){
+                        boolean gyro=!a[1].equals("0");
+                        if(listener!=null)listener.onMode(gyro);
+                        // Re-sending MODE 1 while already in gyro mode is the v11 recenter command.
+                        // It is harmless on first entry/reconnect because gyro calibration is supposed to reset there too.
+                        if(gyro&&activity!=null)activity.recalibrateGyro();
+                    }
                     break;
                 case "GVIEW":
                     if(a.length>=4&&listener!=null)listener.onGyroView(Double.parseDouble(a[1]),Double.parseDouble(a[2]),Double.parseDouble(a[3]));
