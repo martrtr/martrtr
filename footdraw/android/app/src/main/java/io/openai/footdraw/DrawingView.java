@@ -25,9 +25,13 @@ public final class DrawingView extends View implements NetClient.Listener {
         boolean havePrev,prevInside;
         float prevX,prevY;
     }
-    // Only pointers that are actually useful for drawing live here.
-    // Touches outside the selected area, and palm-classified contacts, are never drawing pointers.
+
+    // Only contacts that have actually become valid drawing contacts live here.
+    // A whole foot outside the selected area is intentionally invisible to this map.
     private final HashMap<Integer,PointerState> pointers=new HashMap<>();
+    private PointerState pendingResume;
+    private long pendingResumeUntil;
+    private int pendingResumeSerial;
 
     private volatile int bgColor=0xFF000000, brushColor=0xFFEBEEF4;
     private volatile boolean landscape=false, clipEnabled=false;
@@ -70,12 +74,31 @@ public final class DrawingView extends View implements NetClient.Listener {
         float w=getWidth(),h=getHeight();if(w<=0||h<=0)return false;
         float nx=x/w,ny=y/h;return nx>=clipL&&nx<=clipR&&ny>=clipT&&ny<=clipB;
     }
+
     private boolean isPalm(MotionEvent e,int i){
-        // Android's public Java API doesn't expose a TOOL_TYPE_PALM constant on this SDK,
-        // but InputReader uses numeric tool type 5 for palm-classified contacts where available.
+        // InputReader uses numeric tool type 5 for palm-classified contacts on devices that expose it.
         try{return e.getToolType(i)==5;}catch(Throwable ignored){return false;}
     }
-    private float leftPx(){return clipL*getWidth();}private float rightPx(){return clipR*getWidth();}private float topPx(){return clipT*getHeight();}private float bottomPx(){return clipB*getHeight();}
+
+    private boolean isClearlyLargeUntrackedContact(MotionEvent e,int i){
+        // This is only consulted BEFORE a contact is accepted for drawing. Once the big toe has
+        // started a stroke we latch it, so pressure/area fluctuations cannot kick it out mid-line.
+        try{
+            float minDim=Math.max(1f,Math.min(getWidth(),getHeight()));
+            float major=e.getTouchMajor(i);
+            float size=e.getSize(i);
+            return (major>0f&&major>minDim*0.16f)||size>0.28f;
+        }catch(Throwable ignored){return false;}
+    }
+
+    private boolean rejectNewContact(MotionEvent e,int i){
+        return isPalm(e,i)||isClearlyLargeUntrackedContact(e,i);
+    }
+
+    private float leftPx(){return clipL*getWidth();}
+    private float rightPx(){return clipR*getWidth();}
+    private float topPx(){return clipT*getHeight();}
+    private float bottomPx(){return clipB*getHeight();}
 
     private PointF[] clipSegment(float x0,float y0,float x1,float y1){
         if(!clipEnabled)return new PointF[]{new PointF(x0,y0),new PointF(x1,y1)};
@@ -116,12 +139,52 @@ public final class DrawingView extends View implements NetClient.Listener {
         s.prevX=x;s.prevY=y;s.prevInside=in;s.havePrev=true;
     }
 
+    private PointerState takePendingResumeIfNear(int id,float x,float y,long when){
+        PointerState s=pendingResume;
+        if(s==null||s.stroke==null||when>pendingResumeUntil)return null;
+        float dx=x-s.lastX,dy=y-s.lastY;
+        float maxDist=Math.max(90f,Math.min(getWidth(),getHeight())*0.18f);
+        if(dx*dx+dy*dy>maxDist*maxDist)return null;
+        pendingResume=null;pendingResumeSerial++;
+        pointers.put(id,s);
+        return s;
+    }
+
+    private PointerState createOrResumePointer(int id,float x,float y,float pressure,long when){
+        if(!inside(x,y))return null;
+        PointerState s=takePendingResumeIfNear(id,x,y,when);
+        if(s==null)s=createInsidePointer(id);
+        return s;
+    }
+
     private PointerState processPointerSample(int id,float x,float y,float pressure,long when){
         PointerState s=pointers.get(id);
-        if(s==null){if(!inside(x,y))return null;s=createInsidePointer(id);}
+        if(s==null)s=createOrResumePointer(id,x,y,pressure,when);
+        if(s==null)return null;
         processSample(s,x,y,pressure,when);
         if(!inside(x,y)&&s.stroke==null){pointers.remove(id);return null;}
         return s;
+    }
+
+    private void armShortResumeAfterCancel(){
+        PointerState candidate=null;
+        for(PointerState s:pointers.values()){
+            if(s.stroke!=null&&inside(s.lastX,s.lastY)){
+                if(candidate==null)candidate=s; else finishStroke(s,1f);
+            }else finishStroke(s,1f);
+        }
+        pointers.clear();
+        if(candidate==null)return;
+        final PointerState keep=candidate;
+        final int serial=++pendingResumeSerial;
+        pendingResume=keep;
+        pendingResumeUntil=SystemClock.uptimeMillis()+240;
+        postDelayed(()->{
+            if(pendingResume==keep&&pendingResumeSerial==serial){
+                pendingResume=null;
+                finishStroke(keep,1f);
+            }
+        },250);
     }
 
     @Override public boolean onTouchEvent(MotionEvent e){
@@ -131,7 +194,9 @@ public final class DrawingView extends View implements NetClient.Listener {
 
         if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_POINTER_DOWN){
             int i=e.getActionIndex();int id=e.getPointerId(i);
-            if(isPalm(e,i)){PointerState old=pointers.remove(id);finishStroke(old,e.getPressure(i));return true;}
+            // Huge/palm contacts never enter the drawing subsystem. Existing accepted contacts are
+            // deliberately not reclassified later, which keeps the toe stable under changing pressure.
+            if(pointers.get(id)==null&&rejectNewContact(e,i))return true;
             processPointerSample(id,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());
             return true;
         }
@@ -140,16 +205,21 @@ public final class DrawingView extends View implements NetClient.Listener {
             int hc=e.getHistorySize();
             for(int i=0;i<e.getPointerCount();i++){
                 int id=e.getPointerId(i);
-                if(isPalm(e,i)){PointerState old=pointers.remove(id);finishStroke(old,e.getPressure(i));continue;}
                 PointerState s=pointers.get(id);
+                if(s==null&&rejectNewContact(e,i))continue;
+
                 for(int h=0;h<hc;h++){
                     float x=e.getHistoricalX(i,h),y=e.getHistoricalY(i,h),p=e.getHistoricalPressure(i,h);long when=e.getHistoricalEventTime(h);
-                    if(s==null){if(!inside(x,y))continue;s=createInsidePointer(id);}
+                    if(s==null){if(!inside(x,y))continue;s=createOrResumePointer(id,x,y,p,when);if(s==null)continue;}
                     processSample(s,x,y,p,when);
-                    if(!inside(x,y)&&s.stroke==null){pointers.remove(id);s=null;}
+                    if(!inside(x,y)&&s.stroke==null){pointers.remove(id);s=null;break;}
                 }
+
                 float x=e.getX(i),y=e.getY(i),p=e.getPressure(i);long when=e.getEventTime();
-                if(s==null){if(!inside(x,y))continue;s=createInsidePointer(id);}
+                if(s==null){
+                    if(rejectNewContact(e,i)||!inside(x,y))continue;
+                    s=createOrResumePointer(id,x,y,p,when);if(s==null)continue;
+                }
                 processSample(s,x,y,p,when);
                 if(!inside(x,y)&&s.stroke==null)pointers.remove(id);
             }
@@ -158,15 +228,21 @@ public final class DrawingView extends View implements NetClient.Listener {
 
         if(action==MotionEvent.ACTION_POINTER_UP||action==MotionEvent.ACTION_UP){
             int i=e.getActionIndex();int id=e.getPointerId(i);PointerState s=pointers.get(id);
-            if(!isPalm(e,i)&&s!=null){processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());finishStroke(s,e.getPressure(i));}
-            else finishStroke(s,e.getPressure(i));
+            if(s!=null){processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());finishStroke(s,e.getPressure(i));}
             pointers.remove(id);
-            if(action==MotionEvent.ACTION_UP)pointers.clear();return true;
+            if(action==MotionEvent.ACTION_UP){
+                for(PointerState other:pointers.values())finishStroke(other,1f);
+                pointers.clear();
+            }
+            return true;
         }
 
         if(action==MotionEvent.ACTION_CANCEL){
-            for(PointerState s:pointers.values())finishStroke(s,1f);
-            pointers.clear();return true;
+            // Large-foot pressure can make the controller briefly cancel the Android gesture even
+            // though the toe never left the yellow box. Preserve one active in-zone stroke for a
+            // short window and reconnect it when the toe is reported again nearby.
+            armShortResumeAfterCancel();
+            return true;
         }
         return true;
     }
@@ -178,7 +254,14 @@ public final class DrawingView extends View implements NetClient.Listener {
     }
 
     @Override public void onView(double x,double y){vx=x;vy=y;postInvalidateOnAnimation();}
-    @Override public void onClear(long epoch){synchronized(pts){pts.clear();}for(PointerState s:pointers.values())s.stroke=null;pointers.clear();postInvalidateOnAnimation();}
+    @Override public void onClear(long epoch){
+        synchronized(pts){pts.clear();}
+        for(PointerState s:pointers.values())s.stroke=null;
+        pointers.clear();
+        if(pendingResume!=null)pendingResume.stroke=null;
+        pendingResume=null;pendingResumeSerial++;
+        postInvalidateOnAnimation();
+    }
 
     @Override public void onConfig(int bg,int brush,boolean land,boolean clip,float l,float t,float r,float b){
         bgColor=0xFF000000|(bg&0xFFFFFF);brushColor=0xFF000000|(brush&0xFFFFFF);clipEnabled=clip;clipL=Math.max(0f,Math.min(1f,l));clipT=Math.max(0f,Math.min(1f,t));clipR=Math.max(clipL,Math.min(1f,r));clipB=Math.max(clipT,Math.min(1f,b));
