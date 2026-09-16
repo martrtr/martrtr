@@ -25,6 +25,8 @@ public final class DrawingView extends View implements NetClient.Listener {
         boolean havePrev,prevInside;
         float prevX,prevY;
     }
+    // Important: only pointers that are currently relevant to the drawable area live here.
+    // Touches that stay outside the selected area are never registered as drawing pointers.
     private final HashMap<Integer,PointerState> pointers=new HashMap<>();
 
     private volatile int bgColor=0xFF000000, brushColor=0xFFEBEEF4;
@@ -36,7 +38,7 @@ public final class DrawingView extends View implements NetClient.Listener {
         paint.setStrokeWidth(8);paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);
         clipPaint.setStyle(Paint.Style.STROKE);clipPaint.setStrokeWidth(3);clipPaint.setColor(Color.rgb(255,190,70));
         synchronized(pts){pts.addAll(store.points());}vx=store.vx();vy=store.vy();
-        if(Build.VERSION.SDK_INT>=29){post(this::excludeSystemGestures);}
+        if(Build.VERSION.SDK_INT>=29)post(this::excludeSystemGestures);
     }
 
     private void excludeSystemGestures(){
@@ -63,8 +65,15 @@ public final class DrawingView extends View implements NetClient.Listener {
         if(clipEnabled){RectF r=new RectF(clipL*sw,clipT*sh,clipR*sw,clipB*sh);c.drawRect(r,clipPaint);}
     }
 
-    private boolean inside(float x,float y){if(!clipEnabled)return true;float w=getWidth(),h=getHeight();if(w<=0||h<=0)return false;float nx=x/w,ny=y/h;return nx>=clipL&&nx<=clipR&&ny>=clipT&&ny<=clipB;}
-    private float leftPx(){return clipL*getWidth();}private float rightPx(){return clipR*getWidth();}private float topPx(){return clipT*getHeight();}private float bottomPx(){return clipB*getHeight();}
+    private boolean inside(float x,float y){
+        if(!clipEnabled)return true;
+        float w=getWidth(),h=getHeight();if(w<=0||h<=0)return false;
+        float nx=x/w,ny=y/h;return nx>=clipL&&nx<=clipR&&ny>=clipT&&ny<=clipB;
+    }
+    private float leftPx(){return clipL*getWidth();}
+    private float rightPx(){return clipR*getWidth();}
+    private float topPx(){return clipT*getHeight();}
+    private float bottomPx(){return clipB*getHeight();}
 
     private PointF[] clipSegment(float x0,float y0,float x1,float y1){
         if(!clipEnabled)return new PointF[]{new PointF(x0,y0),new PointF(x1,y1)};
@@ -78,9 +87,8 @@ public final class DrawingView extends View implements NetClient.Listener {
         return new PointF[]{new PointF(x0+u0*dx,y0+u0*dy),new PointF(x0+u1*dx,y0+u1*dy)};
     }
 
-    private PointerState stateFor(int id){
-        PointerState s=pointers.get(id);
-        if(s==null){s=new PointerState();pointers.put(id,s);}return s;
+    private PointerState createInsidePointer(int id){
+        PointerState s=new PointerState();pointers.put(id,s);return s;
     }
 
     private void beginStroke(PointerState s,float x,float y,float pressure,long when){
@@ -111,22 +119,47 @@ public final class DrawingView extends View implements NetClient.Listener {
         s.prevX=x;s.prevY=y;s.prevInside=in;s.havePrev=true;
     }
 
+    private PointerState processPointerSample(int id,float x,float y,float pressure,long when){
+        PointerState s=pointers.get(id);
+        if(s==null){
+            // Outside touches are intentionally invisible to the drawing subsystem.
+            // A pointer only becomes drawable at the first sample that is actually inside.
+            if(!inside(x,y))return null;
+            s=createInsidePointer(id);
+        }
+        processSample(s,x,y,pressure,when);
+        // The moment it leaves the selected area and the stroke is finished, forget it again.
+        // If the same finger later re-enters, it will start a fresh stroke from that entry point.
+        if(!inside(x,y)&&s.stroke==null){pointers.remove(id);return null;}
+        return s;
+    }
+
     @Override public boolean onTouchEvent(MotionEvent e){
         if(getWidth()<=0||getHeight()<=0)return true;
         try{getParent().requestDisallowInterceptTouchEvent(true);}catch(Exception ignored){}
         int action=e.getActionMasked();
 
         if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_POINTER_DOWN){
-            int i=e.getActionIndex();int id=e.getPointerId(i);PointerState s=stateFor(id);
-            processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());return true;
+            int i=e.getActionIndex();int id=e.getPointerId(i);
+            processPointerSample(id,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());
+            return true;
         }
 
         if(action==MotionEvent.ACTION_MOVE){
             int hc=e.getHistorySize();
             for(int i=0;i<e.getPointerCount();i++){
-                int id=e.getPointerId(i);PointerState s=stateFor(id);
-                for(int h=0;h<hc;h++)processSample(s,e.getHistoricalX(i,h),e.getHistoricalY(i,h),e.getHistoricalPressure(i,h),e.getHistoricalEventTime(h));
-                processSample(s,e.getX(i),e.getY(i),e.getPressure(i),e.getEventTime());
+                int id=e.getPointerId(i);
+                PointerState s=pointers.get(id);
+                for(int h=0;h<hc;h++){
+                    float x=e.getHistoricalX(i,h),y=e.getHistoricalY(i,h),p=e.getHistoricalPressure(i,h);long when=e.getHistoricalEventTime(h);
+                    if(s==null){if(!inside(x,y))continue;s=createInsidePointer(id);}
+                    processSample(s,x,y,p,when);
+                    if(!inside(x,y)&&s.stroke==null){pointers.remove(id);s=null;}
+                }
+                float x=e.getX(i),y=e.getY(i),p=e.getPressure(i);long when=e.getEventTime();
+                if(s==null){if(!inside(x,y))continue;s=createInsidePointer(id);}
+                processSample(s,x,y,p,when);
+                if(!inside(x,y)&&s.stroke==null)pointers.remove(id);
             }
             return true;
         }
