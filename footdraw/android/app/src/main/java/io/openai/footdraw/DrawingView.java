@@ -26,7 +26,7 @@ public final class DrawingView extends View implements NetClient.Listener {
         float prevX,prevY;
     }
     // Only pointers that are actually useful for drawing live here.
-    // Contacts outside the selected area, and Android-classified palms, are never drawing pointers.
+    // Touches outside the selected area, and palm-classified contacts, are never drawing pointers.
     private final HashMap<Integer,PointerState> pointers=new HashMap<>();
 
     private volatile int bgColor=0xFF000000, brushColor=0xFFEBEEF4;
@@ -71,7 +71,9 @@ public final class DrawingView extends View implements NetClient.Listener {
         float nx=x/w,ny=y/h;return nx>=clipL&&nx<=clipR&&ny>=clipT&&ny<=clipB;
     }
     private boolean isPalm(MotionEvent e,int i){
-        try{return Build.VERSION.SDK_INT>=33&&e.getToolType(i)==MotionEvent.TOOL_TYPE_PALM;}catch(Throwable ignored){return false;}
+        // Android's public Java API doesn't expose a TOOL_TYPE_PALM constant on this SDK,
+        // but InputReader uses numeric tool type 5 for palm-classified contacts where available.
+        try{return e.getToolType(i)==5;}catch(Throwable ignored){return false;}
     }
     private float leftPx(){return clipL*getWidth();}private float rightPx(){return clipR*getWidth();}private float topPx(){return clipT*getHeight();}private float bottomPx(){return clipB*getHeight();}
 
