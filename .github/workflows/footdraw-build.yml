@@ -34,9 +34,9 @@ jobs:
       - name: Stage
         run: |
           mkdir -p dist
-          cp footdraw/android/app/build/outputs/apk/debug/app-debug.apk dist/FootDraw-Android-v10.apk
+          cp footdraw/android/app/build/outputs/apk/debug/app-debug.apk dist/FootDraw-Android-v11.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: footdraw-android-v10
-          path: dist/FootDraw-Android-v10.apk
+          name: footdraw-android-v11
+          path: dist/FootDraw-Android-v11.apk
           if-no-files-found: error
