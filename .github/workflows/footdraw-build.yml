@@ -15,16 +15,23 @@ jobs:
       - name: Install Android API 36 and NDK
         run: |
           yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018' || true
-      - name: Build xaga Foot Mode helpers
+      - name: Build ARM64 and ARMv7 Foot Mode helpers
         run: |
           NDK="${ANDROID_HOME}/ndk/27.2.12479018"
-          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
-          test -x "$CLANG"
+          TOOL="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          A64="$TOOL/aarch64-linux-android26-clang"
+          A32="$TOOL/armv7a-linux-androideabi26-clang"
+          test -x "$A64"
+          test -x "$A32"
           mkdir -p footdraw/android/app/src/main/res/raw
-          "$CLANG" -O2 -fPIE -pie footdraw/android/foot_touch.c -o footdraw/android/app/src/main/res/raw/foot_touch
-          "$CLANG" -O2 -fPIE -pie footdraw/android/foot_raw.c -o footdraw/android/app/src/main/res/raw/foot_raw
-          file footdraw/android/app/src/main/res/raw/foot_touch
-          file footdraw/android/app/src/main/res/raw/foot_raw
+          "$A64" -O2 -fPIE -pie footdraw/android/foot_touch.c -o footdraw/android/app/src/main/res/raw/foot_touch_arm64
+          "$A64" -O2 -fPIE -pie footdraw/android/foot_raw.c -o footdraw/android/app/src/main/res/raw/foot_raw_arm64
+          "$A32" -O2 -fPIE -pie footdraw/android/foot_touch.c -o footdraw/android/app/src/main/res/raw/foot_touch_armv7
+          "$A32" -O2 -fPIE -pie footdraw/android/foot_raw.c -o footdraw/android/app/src/main/res/raw/foot_raw_armv7
+          file footdraw/android/app/src/main/res/raw/foot_touch_arm64
+          file footdraw/android/app/src/main/res/raw/foot_raw_arm64
+          file footdraw/android/app/src/main/res/raw/foot_touch_armv7
+          file footdraw/android/app/src/main/res/raw/foot_raw_armv7
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
@@ -34,9 +41,9 @@ jobs:
       - name: Stage
         run: |
           mkdir -p dist
-          cp footdraw/android/app/build/outputs/apk/debug/app-debug.apk dist/FootDraw-Android-v11.apk
+          cp footdraw/android/app/build/outputs/apk/debug/app-debug.apk dist/FootDraw-Android-v11.1.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: footdraw-android-v11
-          path: dist/FootDraw-Android-v11.apk
+          name: footdraw-android-v11.1
+          path: dist/FootDraw-Android-v11.1.apk
           if-no-files-found: error
