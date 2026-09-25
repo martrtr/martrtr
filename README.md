@@ -1,6 +1,1 @@
-![banner](https://github.com/user-attachments/assets/d1aac195-ccde-46d0-a929-b91ae8812333)
-[![Typing SVG](https://readme-typing-svg.herokuapp.com?color=%2336BCF7&lines=техно+маг)](https://git.io/typing-svg)
-
-i use nixos btw)
-
-![LeetCode Stats](https://leetcard.jacoblin.cool/martrtr?theme=transparent&font=Asap)
+<img width="100%" alt="banner" src="https://github.com/user-attachments/assets/e8a7bb85-9f2b-4f98-92f6-4899eee657ce" />
