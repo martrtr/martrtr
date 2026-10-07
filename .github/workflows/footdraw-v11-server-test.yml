@@ -1,0 +1,80 @@
+name: FootDraw V11 relay compatibility
+
+on:
+  push:
+    branches: [chatgpt/footdraw-v11-newserver-20261008]
+    paths:
+      - 'server-v11/**'
+      - '.github/workflows/footdraw-v11-server-test.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile relay
+        run: python3 -m py_compile server-v11/footdraw_server_v4_1.py
+      - name: Run V11 protocol integration test
+        run: |
+          rm -rf /tmp/footdraw-v11-test
+          python3 -u server-v11/footdraw_server_v4_1.py --host 127.0.0.1 --port 54950 --data /tmp/footdraw-v11-test >/tmp/footdraw-v11-server.log 2>&1 &
+          echo $! >/tmp/footdraw-v11-server.pid
+          sleep 0.4
+          python3 - <<'PY'
+          import socket, struct, time
+          HOST='127.0.0.1'; PORT=54950
+          TOKEN=b'f2f3a025173941f9cb1d297eba2c0469'
+
+          class Peer:
+              def __init__(self, hello):
+                  self.s=socket.create_connection((HOST,PORT),2)
+                  self.s.settimeout(2)
+                  self.s.sendall(hello+b'\n')
+                  self.buf=b''
+              def line(self):
+                  while b'\n' not in self.buf:
+                      d=self.s.recv(65536)
+                      if not d: raise EOFError
+                      self.buf+=d
+                  a,self.buf=self.buf.split(b'\n',1)
+                  return a.decode()
+              def until(self,prefix):
+                  for _ in range(30):
+                      x=self.line()
+                      if x.startswith(prefix): return x
+                  raise AssertionError(prefix)
+              def send(self,x): self.s.sendall(x.encode()+b'\n')
+
+          op=Peer(b'HELLO OP '+TOKEN)
+          assert op.until('STATE ').startswith('STATE 1 ')
+          op.until('CFG '); op.until('MODE '); op.until('GVIEW '); op.until('RESET '); op.until('SYNCED')
+
+          ph=Peer(b'HELLO PHONE '+TOKEN+b' testdev 1080 2460')
+          ph.until('STATE '); ph.until('CFG '); ph.until('MODE '); ph.until('GVIEW ')
+          op.until('STATE ')
+
+          op.send('BG 112233')
+          assert '112233' in ph.until('CFG ')
+          assert '112233' in op.until('CFG ')
+
+          ph.send('GC 0.25 -0.5 1')
+          assert op.until('GC ') == 'GC 0.25 -0.5 1'
+
+          ph.send('P 1 1 s1 D 0.25 0.5 1.0 123456 aabbcc')
+          assert ph.until('ACKP ') == 'ACKP 1'
+          o=op.until('O ')
+          assert ' s1 D 0.250000000 0.500000000 ' in o and o.endswith('aabbcc')
+
+          pu=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+          pu.bind(('127.0.0.1',0)); pu.settimeout(2)
+          pu.sendto(b'FDH1'+TOKEN,(HOST,PORT))
+          ou=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+          tail=struct.pack('!IH',77,2)+b'\x01\x02\x03\x04'
+          ou.sendto(b'FDO1'+TOKEN+tail,(HOST,PORT))
+          got,_=pu.recvfrom(4096)
+          assert got == b'FDA1'+tail, (got, b'FDA1'+tail)
+          print('V11_PROTOCOL_OK')
+          PY
+          kill "$(cat /tmp/footdraw-v11-server.pid)" || true
+          cat /tmp/footdraw-v11-server.log
