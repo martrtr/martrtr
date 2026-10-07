@@ -1,0 +1,17 @@
+[Unit]
+Description=FootDraw V11 relay v4.1 compatible
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/footdraw-v11
+ExecStart=/usr/bin/python3 -u /opt/footdraw-v11/footdraw_server.py --data /opt/footdraw-v11/data --port 4950
+Restart=always
+RestartSec=1
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
