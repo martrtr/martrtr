@@ -10,6 +10,7 @@ TOKEN = b"f2f3a025173941f9cb1d297eba2c0469"
 TOKEN_S = TOKEN.decode("ascii")
 MAX_LINE = 8192
 MAX_FRAME = 2_000_000
+SERVER_VERSION = "13.0-recovered"
 
 class BoardState:
     def __init__(self, data_dir: Path):
@@ -395,7 +396,7 @@ async def main():
     loop = asyncio.get_running_loop()
     tcp = await asyncio.start_server(relay.handle_tcp, args.tcp_host, args.tcp_port, limit=MAX_LINE)
     udp, _ = await loop.create_datagram_endpoint(lambda: UDP(relay), local_addr=(args.udp_host, args.udp_port))
-    print(f"FootDraw unified relay TCP {args.tcp_host}:{args.tcp_port} UDP {args.udp_host}:{args.udp_port}", flush=True)
+    print(f"FootDraw unified relay {SERVER_VERSION} TCP {args.tcp_host}:{args.tcp_port} UDP {args.udp_host}:{args.udp_port}", flush=True)
     try:
         await tcp.serve_forever()
     finally:
