@@ -444,7 +444,7 @@ class CameraPane(QWidget):
 
 class Window(QMainWindow):
     def __init__(self,host):
-        super().__init__();self.setWindowTitle("FootDraw Operator · Unified");self.resize(1180,760)
+        super().__init__();self.setWindowTitle("FootDraw Operator · Unified v13");self.resize(1180,760)
         self.bus=Bus();self.control=ControlClient(host,self.bus);self.video=VideoReceiver(host,self.bus);self.audio=AudioSender(host,self.bus);self.audio_rx=AudioReceiver(host,self.bus)
         root=QWidget();outer=QVBoxLayout(root);outer.setContentsMargins(8,8,8,8);outer.setSpacing(6);bar=QHBoxLayout();bar.setSpacing(6)
         self.fs=QToolButton();self.fs.setText("⛶");self.fs.clicked.connect(self.toggle_fullscreen)
