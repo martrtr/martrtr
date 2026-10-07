@@ -1,0 +1,86 @@
+name: FootDraw Unified Server Package
+
+on:
+  push:
+    branches: [chatgpt/footdraw-unified-20261007]
+    paths:
+      - 'footdraw_server_unified.py'
+      - '.github/workflows/footdraw-server-package.yml'
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify relay
+        run: |
+          python -m py_compile footdraw_server_unified.py
+          python -m unittest -v tests/test_unified_relay.py
+      - name: Build standalone server package
+        run: |
+          set -eu
+          ROOT=dist/FootDraw-Server-v13-unified
+          mkdir -p "$ROOT"
+          cp footdraw_server_unified.py "$ROOT/footdraw_server_unified.py"
+          cat > "$ROOT/run.sh" <<'EOF'
+          #!/bin/sh
+          set -eu
+          HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          cd "$HERE"
+          mkdir -p data logs
+          if command -v screen >/dev/null 2>&1; then
+            screen -S footdraw -X quit >/dev/null 2>&1 || true
+            screen -dmS footdraw sh -c 'exec python3 ./footdraw_server_unified.py --tcp-host 0.0.0.0 --tcp-port 4950 --udp-host 0.0.0.0 --udp-port 4950 --data ./data >>./logs/server.log 2>&1'
+          else
+            if [ -f footdraw.pid ] && kill -0 "$(cat footdraw.pid)" 2>/dev/null; then
+              kill "$(cat footdraw.pid)" || true
+              sleep 1
+            fi
+            nohup python3 ./footdraw_server_unified.py --tcp-host 0.0.0.0 --tcp-port 4950 --udp-host 0.0.0.0 --udp-port 4950 --data ./data >>./logs/server.log 2>&1 &
+            echo $! > footdraw.pid
+          fi
+          EOF
+          cat > "$ROOT/stop.sh" <<'EOF'
+          #!/bin/sh
+          set -eu
+          cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          if command -v screen >/dev/null 2>&1; then
+            screen -S footdraw -X quit >/dev/null 2>&1 || true
+          fi
+          if [ -f footdraw.pid ]; then
+            kill "$(cat footdraw.pid)" 2>/dev/null || true
+            rm -f footdraw.pid
+          fi
+          EOF
+          cat > "$ROOT/check.sh" <<'EOF'
+          #!/bin/sh
+          echo "FootDraw processes:"
+          ps aux | grep '[f]ootdraw_server_unified.py' || true
+          echo
+          echo "Port 4950:"
+          ss -lntup 2>/dev/null | grep ':4950' || true
+          echo
+          echo "Last log lines:"
+          tail -n 40 "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/logs/server.log" 2>/dev/null || true
+          EOF
+          cat > "$ROOT/README.txt" <<'EOF'
+          FootDraw unified relay v13
+          --------------------------
+          Install directory: /root/footdraw
+          FootDraw only uses TCP+UDP 4950.
+          It does NOT modify Minecraft, systemd, Java, firewall rules, or any Minecraft files.
+          Requires only python3 from Debian. screen is optional; nohup is the fallback.
+          Existing /root/footdraw/data may be kept between upgrades.
+          EOF
+          chmod +x "$ROOT/run.sh" "$ROOT/stop.sh" "$ROOT/check.sh"
+          cd dist
+          zip -r FootDraw-Server-v13-unified.zip FootDraw-Server-v13-unified
+      - uses: actions/upload-artifact@v4
+        with:
+          name: footdraw-server-v13-unified
+          path: dist/FootDraw-Server-v13-unified.zip
+          if-no-files-found: error
