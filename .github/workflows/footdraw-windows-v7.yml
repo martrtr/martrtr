@@ -47,11 +47,27 @@ jobs:
       - name: Point desktop client at new server
         working-directory: build/windows
         run: |
-          sed -i 's/194\\.87\\.97\\.119/31.77.251.51/g' net.go
-          grep -R "31.77.251.51" -n .
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          found=False
+          for p in Path('.').glob('*.go'):
+              s=p.read_text()
+              if 'serverAddr' not in s:
+                  continue
+              ns,n=re.subn(r'(serverAddr\\s*=\\s*")[^"]+("?)', lambda m: m.group(1)+'31.77.251.51:4950'+m.group(2), s)
+              if n:
+                  p.write_text(ns)
+                  print('patched',p,n)
+                  found=True
+          if not found:
+              raise SystemExit('serverAddr assignment not found')
+          PY
+          grep -R "31.77.251.51:4950" -n .
       - name: Archive reconstructed source
         working-directory: build/windows
-        run: tar czf FootDraw-Operator-v11.1-source.tgz *.go go.mod 2>/dev/null || tar czf FootDraw-Operator-v11.1-source.tgz *.go
+        run: |
+          tar czf FootDraw-Operator-v11.1-source.tgz *.go go.mod 2>/dev/null || tar czf FootDraw-Operator-v11.1-source.tgz *.go
       - name: Generate shared icon and PE resource
         working-directory: build/windows
         run: |
@@ -66,5 +82,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: footdraw-windows-v11.1
-          path: build/windows/FootDraw-Operator-v11.exe
+          path: |
+            build/windows/FootDraw-Operator-v11.1-windows.exe
+            build/windows/FootDraw-Operator-v11.1-source.tgz
           if-no-files-found: error
