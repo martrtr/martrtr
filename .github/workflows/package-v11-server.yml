@@ -1,0 +1,28 @@
+name: Package FootDraw V11 server
+
+on:
+  push:
+    branches: [chatgpt/footdraw-v11-newserver-20261008]
+    paths:
+      - 'server-v11/**'
+      - '.github/workflows/package-v11-server.yml'
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate
+        run: |
+          python3 -m py_compile server-v11/footdraw_server_v4_1.py
+          bash -n server-v11/install-v11.sh
+      - name: Package
+        run: |
+          chmod +x server-v11/install-v11.sh
+          tar czf FootDraw-V11-Server.tar.gz server-v11
+      - uses: actions/upload-artifact@v4
+        with:
+          name: footdraw-v11-server
+          path: FootDraw-V11-Server.tar.gz
+          if-no-files-found: error
