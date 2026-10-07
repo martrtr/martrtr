@@ -26,6 +26,7 @@ final class NetworkRouter implements AutoCloseable {
     private volatile boolean running;
     private Thread keeper;
     private volatile boolean rootAvailable;
+    private volatile boolean rootChecked;
 
     NetworkRouter(Context c) {
         context = c.getApplicationContext();
@@ -185,6 +186,12 @@ final class NetworkRouter implements AutoCloseable {
                         lock.notifyAll();
                     }
                 }
+                @Override public void onUnavailable() {
+                    // A NetworkSpecifier request is released after onUnavailable().
+                    // Clear our handle so the keeper can issue a fresh request later.
+                    cameraRequestCb = null;
+                    synchronized (lock) { lock.notifyAll(); }
+                }
             };
             cm.requestNetwork(req, cameraRequestCb);
             Log.i(TAG, "requested camera SSID " + CAMERA_SSID);
@@ -194,14 +201,17 @@ final class NetworkRouter implements AutoCloseable {
         }
     }
 
-    private boolean hasRoot() {
-        if (rootAvailable) return true;
+    private synchronized boolean hasRoot() {
+        if (rootChecked) return rootAvailable;
         try {
             Process p = new ProcessBuilder("su", "-c", "id -u").redirectErrorStream(true).start();
             boolean done = p.waitFor(3500, TimeUnit.MILLISECONDS);
             rootAvailable = done && p.exitValue() == 0;
             if (!done) try { p.destroyForcibly(); } catch (Throwable ignored) {}
-        } catch (Throwable ignored) { rootAvailable = false; }
+        } catch (Throwable ignored) {
+            rootAvailable = false;
+        }
+        rootChecked = true;
         Log.i(TAG, "root=" + rootAvailable);
         return rootAvailable;
     }
@@ -209,10 +219,20 @@ final class NetworkRouter implements AutoCloseable {
     private void rootConnectCamera() {
         if (!hasRoot()) return;
         try {
-            String cmd = "cmd wifi set-wifi-enabled enabled; "
-                    + "cmd wifi connect-network '" + CAMERA_SSID + "' open -r none >/dev/null 2>&1";
+            // Different Android/Lineage builds expose slightly different cmd-wifi
+            // parsers. Try the modern persistent-free form first, then the
+            // simpler form. Both target the exact open camera SSID.
+            String cmd =
+                    "cmd wifi set-wifi-enabled enabled >/dev/null 2>&1 || true; "
+                    + "svc wifi enable >/dev/null 2>&1 || true; "
+                    + "cmd wifi connect-network '" + CAMERA_SSID
+                    + "' open -r none >/dev/null 2>&1 "
+                    + "|| cmd wifi connect-network '" + CAMERA_SSID
+                    + "' open >/dev/null 2>&1 || true";
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
-            p.waitFor(1800, TimeUnit.MILLISECONDS);
+            if (!p.waitFor(2200, TimeUnit.MILLISECONDS)) {
+                try { p.destroyForcibly(); } catch (Throwable ignored) {}
+            }
         } catch (Throwable e) {
             Log.w(TAG, "root camera connect", e);
         }
