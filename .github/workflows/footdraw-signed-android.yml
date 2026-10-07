@@ -1,0 +1,20 @@
+name: FootDraw Signed Android Artifact
+on:
+  push:
+    branches: [chatgpt/footdraw-unified-20261007]
+    paths:
+      - 'dist/FootDraw-Agent-Android-v12-unified.apk'
+      - '.github/workflows/footdraw-signed-android.yml'
+  workflow_dispatch:
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify signed APK exists
+        run: test -s dist/FootDraw-Agent-Android-v12-unified.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: footdraw-android-signed-tested
+          path: dist/FootDraw-Agent-Android-v12-unified.apk
+          if-no-files-found: error
