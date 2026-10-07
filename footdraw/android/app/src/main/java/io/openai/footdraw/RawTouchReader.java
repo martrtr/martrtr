@@ -1,6 +1,7 @@
 package io.openai.footdraw;
 
 import android.app.Activity;
+import android.os.Build;
 import android.os.Process;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -13,9 +14,22 @@ final class RawTouchReader {
 
     RawTouchReader(Activity a, DrawingView d){activity=a;drawing=d;}
 
+    private int helperResource() throws IOException {
+        String[] abis=Build.SUPPORTED_ABIS;
+        if(abis!=null){
+            for(String abi:abis){
+                if(abi==null)continue;
+                String a=abi.toLowerCase(java.util.Locale.ROOT);
+                if(a.equals("arm64-v8a"))return R.raw.foot_raw_arm64;
+                if(a.equals("armeabi-v7a")||a.equals("armeabi"))return R.raw.foot_raw_armv7;
+            }
+        }
+        throw new IOException("unsupported ABI: "+java.util.Arrays.toString(abis));
+    }
+
     private File install() throws Exception {
         File f=new File(activity.getFilesDir(),"foot_raw_helper");
-        try(InputStream in=activity.getResources().openRawResource(R.raw.foot_raw);
+        try(InputStream in=activity.getResources().openRawResource(helperResource());
             FileOutputStream out=new FileOutputStream(f,false)){
             byte[] b=new byte[8192]; int n;
             while((n=in.read(b))>0)out.write(b,0,n);
