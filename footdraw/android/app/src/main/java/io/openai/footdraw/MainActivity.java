@@ -20,6 +20,7 @@ public final class MainActivity extends Activity {
     private NetworkRouter networkRouter;
     private JieliFpvClient fpv;
     private FpvVideoSender fpvVideo;
+    private PhoneAudioUplink phoneMic;
     private long lastVolDown=0;
     private boolean exiting=false;
     private boolean operatorLandscape=false;
@@ -32,7 +33,7 @@ public final class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                 |WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
-        requestWifiPermission();
+        requestRuntimePermissions();
 
         store=new Store(this);
         drawing=new DrawingView(this,store);
@@ -51,6 +52,8 @@ public final class MainActivity extends Activity {
         AudioBoost.prepare(this);
         audio=new AudioClient(this,drawing,networkRouter);
         audio.start();
+        phoneMic=new PhoneAudioUplink(this,networkRouter);
+        phoneMic.start();
 
         kiosk=new RootKiosk();
         kiosk.start(this);
@@ -74,19 +77,20 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void requestWifiPermission(){
+    private void requestRuntimePermissions(){
         try{
+            if(Build.VERSION.SDK_INT<23)return;
+            java.util.ArrayList<String> req=new java.util.ArrayList<>();
             if(Build.VERSION.SDK_INT>=33){
-                if(checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES)
-                        !=PackageManager.PERMISSION_GRANTED){
-                    requestPermissions(new String[]{Manifest.permission.NEARBY_WIFI_DEVICES},701);
-                }
-            }else if(Build.VERSION.SDK_INT>=23){
-                if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-                        !=PackageManager.PERMISSION_GRANTED){
-                    requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION},702);
-                }
+                if(checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES)!=PackageManager.PERMISSION_GRANTED)
+                    req.add(Manifest.permission.NEARBY_WIFI_DEVICES);
+            }else{
+                if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)
+                    req.add(Manifest.permission.ACCESS_FINE_LOCATION);
             }
+            if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)
+                req.add(Manifest.permission.RECORD_AUDIO);
+            if(!req.isEmpty())requestPermissions(req.toArray(new String[0]),701);
         }catch(Exception ignored){}
     }
 
@@ -171,6 +175,7 @@ public final class MainActivity extends Activity {
         if(kiosk!=null)kiosk.stop();
         if(net!=null)net.close();
         if(audio!=null)audio.close();
+        if(phoneMic!=null)phoneMic.close();
         if(networkRouter!=null)networkRouter.close();
         AudioBoost.release(this);
         new Handler(Looper.getMainLooper()).postDelayed(()->{
@@ -187,6 +192,7 @@ public final class MainActivity extends Activity {
         if(rawTouch!=null)rawTouch.close();
         if(net!=null)net.close();
         if(audio!=null)audio.close();
+        if(phoneMic!=null)phoneMic.close();
         if(networkRouter!=null)networkRouter.close();
         AudioBoost.release(this);
         super.onDestroy();

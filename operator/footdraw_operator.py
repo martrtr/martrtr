@@ -198,11 +198,8 @@ class AudioSender:
             try:
                 with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
                     s.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF,512*1024)
-                    addr=(self.host,PORT); last_hello=0.; backoff=.15
+                    addr=(self.host,PORT); backoff=.15
                     while self.running:
-                        now=time.monotonic()
-                        if now-last_hello>.65:
-                            s.sendto(b"FDOH"+TOKEN.encode("ascii"),addr); last_hello=now
                         try:cur=self.frames.get(timeout=.05)
                         except queue.Empty:continue
                         if self.muted or len(cur)!=640:
@@ -214,6 +211,88 @@ class AudioSender:
                         s.sendto(pkt,addr); self.prev=cur
             except Exception:
                 time.sleep(backoff);backoff=min(2.0,backoff*1.7)
+
+class AudioReceiver:
+    FRAME_BYTES=640
+    def __init__(self,host,bus):
+        self.host,self.bus=host,bus
+        self.running=True;self.sock=None
+        self.frames={};self.lock=threading.Condition();self.expected=None
+        threading.Thread(target=self.net_loop,daemon=True,name="FootDraw-AudioRx").start()
+        threading.Thread(target=self.play_loop,daemon=True,name="FootDraw-AudioPlay").start()
+    def close(self):
+        self.running=False
+        try:
+            if self.sock:self.sock.close()
+        except Exception:pass
+        with self.lock:self.lock.notify_all()
+    def enqueue(self,seq,cur,prev=None):
+        with self.lock:
+            if prev is not None and len(prev)==self.FRAME_BYTES and seq>0:
+                self.frames.setdefault((seq-1)&0xffffffff,prev)
+            if len(cur)==self.FRAME_BYTES:self.frames[seq]=cur
+            if len(self.frames)>60:
+                for k in sorted(self.frames)[:-16]:self.frames.pop(k,None)
+                self.expected=None
+            self.lock.notify_all()
+    def parse(self,d):
+        if len(d)<10 or d[:4]!=b"FDR1":return
+        seq,samples=struct.unpack("!IH",d[4:10]);payload=d[10:]
+        if payload.startswith(b"FDR2") and len(payload)>=8:
+            try:
+                cur_len=struct.unpack("!H",payload[4:6])[0];o=6
+                if cur_len<=0 or o+cur_len+2>len(payload):return
+                cur=payload[o:o+cur_len];o+=cur_len
+                prev_len=struct.unpack("!H",payload[o:o+2])[0];o+=2
+                if o+prev_len!=len(payload):return
+                prev=payload[o:o+prev_len] if prev_len else None
+                self.enqueue(seq,cur,prev)
+            except Exception:return
+        elif len(payload)==self.FRAME_BYTES:self.enqueue(seq,payload)
+    def net_loop(self):
+        backoff=.15;hello=b"FDOH"+TOKEN.encode("ascii")
+        while self.running:
+            try:
+                with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
+                    self.sock=s;s.settimeout(.08);s.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,512*1024)
+                    addr=(self.host,PORT);last=0.;backoff=.15
+                    while self.running:
+                        now=time.monotonic()
+                        if now-last>.65:s.sendto(hello,addr);last=now
+                        try:d,_=s.recvfrom(4096);self.parse(d)
+                        except socket.timeout:pass
+            except Exception:
+                time.sleep(backoff);backoff=min(2.,backoff*1.7)
+            finally:self.sock=None
+    def take(self):
+        with self.lock:
+            while self.running and self.expected is None:
+                if len(self.frames)>=5:self.expected=min(self.frames);break
+                self.lock.wait(.02)
+            if not self.running:return None
+            deadline=time.monotonic()+.032
+            while self.running:
+                if self.expected in self.frames:
+                    f=self.frames.pop(self.expected);self.expected=(self.expected+1)&0xffffffff;return f
+                left=deadline-time.monotonic()
+                if left<=0:
+                    self.expected=(self.expected+1)&0xffffffff
+                    return bytes(self.FRAME_BYTES)
+                self.lock.wait(min(left,.006))
+            return None
+    def play_loop(self):
+        backoff=.25
+        while self.running:
+            try:
+                with sd.RawOutputStream(samplerate=16000,blocksize=320,channels=1,dtype="int16",latency="low") as out:
+                    self.bus.audio_status.emit("phone mic: listening");backoff=.25
+                    while self.running:
+                        f=self.take()
+                        if f is None:break
+                        out.write(f)
+            except Exception:
+                self.bus.audio_status.emit("phone mic: output unavailable")
+                time.sleep(backoff);backoff=min(2.,backoff*1.7)
 
 class PalettePopup(QFrame):
     COLORS=[0x000000,0xFFFFFF,0xEBEEF4,0x8B93A7,0xFF4D6D,0xFF8A3D,0xFFD166,0x72D572,0x2DD4BF,0x4CC9F0,0x4D7CFE,0x7C5CFC,0xB85CFF,0xFF62C0,0x8B5E3C,0x3A2F2A]
@@ -366,7 +445,7 @@ class CameraPane(QWidget):
 class Window(QMainWindow):
     def __init__(self,host):
         super().__init__();self.setWindowTitle("FootDraw Operator · Unified");self.resize(1180,760)
-        self.bus=Bus();self.control=ControlClient(host,self.bus);self.video=VideoReceiver(host,self.bus);self.audio=AudioSender(host,self.bus)
+        self.bus=Bus();self.control=ControlClient(host,self.bus);self.video=VideoReceiver(host,self.bus);self.audio=AudioSender(host,self.bus);self.audio_rx=AudioReceiver(host,self.bus)
         root=QWidget();outer=QVBoxLayout(root);outer.setContentsMargins(8,8,8,8);outer.setSpacing(6);bar=QHBoxLayout();bar.setSpacing(6)
         self.fs=QToolButton();self.fs.setText("⛶");self.fs.clicked.connect(self.toggle_fullscreen)
         self.clear=QToolButton();self.clear.setText("⌫");self.clear.clicked.connect(lambda:self.control.send("CLEAR"))
@@ -424,7 +503,7 @@ class Window(QMainWindow):
     def keyPressEvent(self,e):
         if e.key()==Qt.Key_Escape and self.isFullScreen():self.toggle_fullscreen();return
         super().keyPressEvent(e)
-    def closeEvent(self,e):self.audio.close();self.video.close();self.control.close();super().closeEvent(e)
+    def closeEvent(self,e):self.audio.close();self.audio_rx.close();self.video.close();self.control.close();super().closeEvent(e)
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--host",default=HOST_DEFAULT);args=ap.parse_args()

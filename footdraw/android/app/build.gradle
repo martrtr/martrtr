@@ -7,7 +7,7 @@ android {
         applicationId 'io.openai.footdraw'
         minSdk 26
         targetSdk 36
-        versionCode 121
-        versionName '12.1-camera-unified'
+        versionCode 122
+        versionName '12.2-camera-unified'
     }
 }
