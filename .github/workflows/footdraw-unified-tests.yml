@@ -1,0 +1,26 @@
+name: FootDraw Unified Protocol Tests
+
+on:
+  push:
+    branches: [chatgpt/footdraw-unified-20261007]
+    paths:
+      - 'footdraw_server_unified.py'
+      - 'tests/**'
+      - 'operator/**'
+      - '.github/workflows/footdraw-unified-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax check
+        run: |
+          python -m py_compile footdraw_server_unified.py
+          python -m py_compile operator/footdraw_operator.py
+      - name: Relay end-to-end test
+        run: python -m unittest -v tests/test_unified_relay.py
