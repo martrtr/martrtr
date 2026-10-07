@@ -50,9 +50,9 @@ jobs:
       - name: Stage
         run: |
           mkdir -p dist
-          cp footdraw/android/app/build/outputs/apk/debug/app-debug.apk dist/FootDraw-Agent-Android-v12.1-unified-ci.apk
+          cp footdraw/android/app/build/outputs/apk/debug/app-debug.apk dist/FootDraw-Agent-Android-v12.3-unified-ci.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: footdraw-android-unified-ci
-          path: dist/FootDraw-Agent-Android-v12.1-unified-ci.apk
+          name: footdraw-android-unified-v12.3-ci
+          path: dist/FootDraw-Agent-Android-v12.3-unified-ci.apk
           if-no-files-found: error
