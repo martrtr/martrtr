@@ -1,0 +1,17 @@
+[Unit]
+Description=FootDraw unified relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/footdraw
+ExecStart=/usr/bin/python3 -u /root/footdraw/footdraw_server.py
+Restart=always
+RestartSec=1
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
