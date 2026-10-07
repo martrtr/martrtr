@@ -1,4 +1,4 @@
-name: FootDraw Windows v11
+name: FootDraw Windows v11.1
 
 on:
   push:
@@ -44,6 +44,14 @@ jobs:
           python3 v11_patch.py
           rm audio_patch.py v10_fix.py v11_patch.py
           gofmt -w main_windows.go mic_windows.go net.go makeico.go
+      - name: Point desktop client at new server
+        working-directory: build/windows
+        run: |
+          sed -i 's/194\\.87\\.97\\.119/31.77.251.51/g' net.go
+          grep -R "31.77.251.51" -n .
+      - name: Archive reconstructed source
+        working-directory: build/windows
+        run: tar czf FootDraw-Operator-v11.1-source.tgz *.go go.mod 2>/dev/null || tar czf FootDraw-Operator-v11.1-source.tgz *.go
       - name: Generate shared icon and PE resource
         working-directory: build/windows
         run: |
@@ -54,9 +62,9 @@ jobs:
       - name: Build GUI exe
         working-directory: build/windows
         run: |
-          GOOS=windows GOARCH=amd64 go build -ldflags='-H=windowsgui -s -w' -o FootDraw-Operator-v11.exe .
+          GOOS=windows GOARCH=amd64 go build -ldflags='-H=windowsgui -s -w' -o FootDraw-Operator-v11.1-windows.exe .
       - uses: actions/upload-artifact@v4
         with:
-          name: footdraw-windows-v11
+          name: footdraw-windows-v11.1
           path: build/windows/FootDraw-Operator-v11.exe
           if-no-files-found: error
