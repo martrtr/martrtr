@@ -13,7 +13,7 @@ public final class NetClient implements AutoCloseable {
         void onMode(boolean gyro);
         void onGyroView(double cx,double cy,double worldPerPixel);
     }
-    private static final String HOST="194.87.97.119";
+    private static final String HOST="31.77.251.51";
     private static final int PORT=4950;
     private static final String TOKEN="f2f3a025173941f9cb1d297eba2c0469";
     private final Store store;
