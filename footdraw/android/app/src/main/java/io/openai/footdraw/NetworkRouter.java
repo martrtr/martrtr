@@ -56,7 +56,8 @@ final class NetworkRouter implements AutoCloseable {
                 }
             }
         };
-        try { cm.requestNetwork(cellReq, cellularCb); } catch (Exception e) { Log.w(TAG, "cell request", e); }
+        try { cm.requestNetwork(cellReq, cellularCb); }
+        catch (Exception e) { Log.w(TAG, "cell request", e); }
 
         NetworkRequest wifiReq = new NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
@@ -71,10 +72,10 @@ final class NetworkRouter implements AutoCloseable {
                 }
             }
         };
-        try { cm.registerNetworkCallback(wifiReq, wifiCb); } catch (Exception e) { Log.w(TAG, "wifi callback", e); }
+        try { cm.registerNetworkCallback(wifiReq, wifiCb); }
+        catch (Exception e) { Log.w(TAG, "wifi callback", e); }
 
         installSuggestion();
-        requestCameraNetwork();
 
         keeper = new Thread(this::keepCameraConnected, "FootDraw-CameraWiFi");
         keeper.start();
@@ -82,8 +83,8 @@ final class NetworkRouter implements AutoCloseable {
 
     private void updateCellular(Network n) {
         synchronized (lock) {
+            if (!n.equals(cellular)) Log.i(TAG, "cellular=" + n);
             cellular = n;
-            Log.i(TAG, "cellular=" + n);
             lock.notifyAll();
         }
     }
@@ -91,8 +92,9 @@ final class NetworkRouter implements AutoCloseable {
     private void considerWifi(Network n) {
         if (!isCameraNetwork(n)) return;
         synchronized (lock) {
+            if (!n.equals(cameraWifi))
+                Log.i(TAG, "camera wifi=" + n + " ssid=" + networkSsid(n));
             cameraWifi = n;
-            Log.i(TAG, "camera wifi=" + n + " ssid=" + networkSsid(n));
             lock.notifyAll();
         }
     }
@@ -112,8 +114,8 @@ final class NetworkRouter implements AutoCloseable {
             }
         } catch (Exception ignored) {}
         synchronized (lock) {
-            if (foundCell != null) cellular = foundCell;
-            if (foundCam != null) cameraWifi = foundCam;
+            cellular = foundCell;
+            cameraWifi = foundCam;
             lock.notifyAll();
         }
     }
@@ -121,14 +123,24 @@ final class NetworkRouter implements AutoCloseable {
     private boolean isCameraNetwork(Network n) {
         String ssid = networkSsid(n);
         if (CAMERA_SSID.equals(ssid)) return true;
+        // On some Android builds the SSID is hidden from NetworkCapabilities even
+        // though the app owns the network. The camera itself is very distinctive:
+        // it hands the phone 192.168.1.2/24 and uses 192.168.1.1 as gateway.
         try {
             LinkProperties lp = cm.getLinkProperties(n);
-            if (lp != null) {
-                for (RouteInfo r : lp.getRoutes()) {
-                    java.net.InetAddress g = r.getGateway();
-                    if (g instanceof Inet4Address && "192.168.1.1".equals(g.getHostAddress())) return true;
-                }
+            if (lp == null) return false;
+            boolean gateway = false, cameraAddress = false;
+            for (RouteInfo r : lp.getRoutes()) {
+                java.net.InetAddress g = r.getGateway();
+                if (g instanceof Inet4Address && "192.168.1.1".equals(g.getHostAddress()))
+                    gateway = true;
             }
+            for (LinkAddress a : lp.getLinkAddresses()) {
+                java.net.InetAddress x = a.getAddress();
+                if (x instanceof Inet4Address && "192.168.1.2".equals(x.getHostAddress()))
+                    cameraAddress = true;
+            }
+            return gateway && cameraAddress;
         } catch (Exception ignored) {}
         return false;
     }
@@ -151,33 +163,37 @@ final class NetworkRouter implements AutoCloseable {
 
     private static String cleanSsid(String s) {
         if (s == null) return "";
-        if (s.length() >= 2 && s.charAt(0) == '"' && s.charAt(s.length()-1) == '"') return s.substring(1, s.length()-1);
+        if (s.length() >= 2 && s.charAt(0) == '"' && s.charAt(s.length()-1) == '"')
+            return s.substring(1, s.length()-1);
         return s;
     }
 
     private void installSuggestion() {
         if (wm == null || Build.VERSION.SDK_INT < 29) return;
         try {
-            WifiNetworkSuggestion suggestion = new WifiNetworkSuggestion.Builder()
+            WifiNetworkSuggestion.Builder b = new WifiNetworkSuggestion.Builder()
                     .setSsid(CAMERA_SSID)
-                    .setIsAppInteractionRequired(false)
-                    .build();
-            int result = wm.addNetworkSuggestions(Collections.singletonList(suggestion));
+                    .setIsAppInteractionRequired(false);
+            if (Build.VERSION.SDK_INT >= 30) b.setIsInitialAutojoinEnabled(true);
+            int result = wm.addNetworkSuggestions(Collections.singletonList(b.build()));
             Log.i(TAG, "camera suggestion result=" + result);
         } catch (Throwable e) {
             Log.w(TAG, "camera suggestion unavailable", e);
         }
     }
 
-    private void requestCameraNetwork() {
-        if (cm == null || Build.VERSION.SDK_INT < 29 || cameraRequestCb != null) return;
+    // Non-root fallback. Android may require one user approval the first time;
+    // after approval the suggestion above is the persistent reconnect mechanism.
+    private synchronized void requestCameraNetwork() {
+        if (cm == null || Build.VERSION.SDK_INT < 29 || cameraRequestCb != null || !running) return;
         try {
-            WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder().setSsid(CAMERA_SSID).build();
+            WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
+                    .setSsid(CAMERA_SSID).build();
             NetworkRequest req = new NetworkRequest.Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                     .setNetworkSpecifier(spec)
                     .build();
-            cameraRequestCb = new ConnectivityManager.NetworkCallback() {
+            final ConnectivityManager.NetworkCallback cb = new ConnectivityManager.NetworkCallback() {
                 @Override public void onAvailable(Network n) { considerWifi(n); }
                 @Override public void onCapabilitiesChanged(Network n, NetworkCapabilities c) { considerWifi(n); }
                 @Override public void onLost(Network n) {
@@ -187,13 +203,14 @@ final class NetworkRouter implements AutoCloseable {
                     }
                 }
                 @Override public void onUnavailable() {
-                    // A NetworkSpecifier request is released after onUnavailable().
-                    // Clear our handle so the keeper can issue a fresh request later.
-                    cameraRequestCb = null;
+                    synchronized (NetworkRouter.this) {
+                        if (cameraRequestCb == this) cameraRequestCb = null;
+                    }
                     synchronized (lock) { lock.notifyAll(); }
                 }
             };
-            cm.requestNetwork(req, cameraRequestCb);
+            cameraRequestCb = cb;
+            cm.requestNetwork(req, cb, 15000);
             Log.i(TAG, "requested camera SSID " + CAMERA_SSID);
         } catch (Throwable e) {
             Log.w(TAG, "camera network request unavailable", e);
@@ -219,18 +236,21 @@ final class NetworkRouter implements AutoCloseable {
     private void rootConnectCamera() {
         if (!hasRoot()) return;
         try {
-            // Different Android/Lineage builds expose slightly different cmd-wifi
-            // parsers. Try the modern persistent-free form first, then the
-            // simpler form. Both target the exact open camera SSID.
+            // Only switch networks if the camera SSID is actually visible. This
+            // avoids repeatedly tearing at the user's normal Wi-Fi while the
+            // camera is powered off.
+            String q = "'" + CAMERA_SSID.replace("'", "'\\''") + "'";
             String cmd =
                     "cmd wifi set-wifi-enabled enabled >/dev/null 2>&1 || true; "
                     + "svc wifi enable >/dev/null 2>&1 || true; "
-                    + "cmd wifi connect-network '" + CAMERA_SSID
-                    + "' open -r none >/dev/null 2>&1 "
-                    + "|| cmd wifi connect-network '" + CAMERA_SSID
-                    + "' open >/dev/null 2>&1 || true";
+                    + "cmd wifi start-scan >/dev/null 2>&1 || true; "
+                    + "sleep 0.15; "
+                    + "if cmd wifi list-scan-results 2>/dev/null | grep -Fq " + q + "; then "
+                    + "cmd wifi connect-network " + q + " open -r none >/dev/null 2>&1 "
+                    + "|| cmd wifi connect-network " + q + " open >/dev/null 2>&1 "
+                    + "|| true; fi";
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
-            if (!p.waitFor(2200, TimeUnit.MILLISECONDS)) {
+            if (!p.waitFor(2600, TimeUnit.MILLISECONDS)) {
                 try { p.destroyForcibly(); } catch (Throwable ignored) {}
             }
         } catch (Throwable e) {
@@ -239,18 +259,23 @@ final class NetworkRouter implements AutoCloseable {
     }
 
     private void keepCameraConnected() {
-        long lastRootAttempt = 0;
+        long lastRootAttempt = 0, lastSpecifierAttempt = 0;
+        boolean root = hasRoot();
         while (running) {
             refreshExisting();
             if (cameraWifi == null) {
                 long now = System.currentTimeMillis();
-                if (now - lastRootAttempt > 2200) {
-                    rootConnectCamera();
-                    lastRootAttempt = now;
+                if (root) {
+                    if (now - lastRootAttempt > 1800) {
+                        rootConnectCamera();
+                        lastRootAttempt = now;
+                    }
+                } else if (now - lastSpecifierAttempt > 16000) {
+                    requestCameraNetwork();
+                    lastSpecifierAttempt = now;
                 }
-                requestCameraNetwork();
             }
-            try { Thread.sleep(cameraWifi == null ? 900 : 2500); }
+            try { Thread.sleep(cameraWifi == null ? 650 : 2000); }
             catch (InterruptedException ignored) {}
         }
     }
