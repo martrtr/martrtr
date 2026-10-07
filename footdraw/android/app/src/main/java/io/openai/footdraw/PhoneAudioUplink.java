@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.media.*;
 import android.net.Network;
+import android.util.Log;
 import java.net.*;
 import java.nio.*;
 import java.nio.charset.StandardCharsets;
@@ -12,6 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Phone/headset microphone -> relay over the explicitly selected cellular network. */
 final class PhoneAudioUplink implements AutoCloseable {
+    private static final String TAG="FootDraw-PhoneMic";
     private static final int RATE=16000, SAMPLES=320, FRAME_BYTES=SAMPLES*2;
     private final Context context;
     private final NetworkRouter router;
@@ -35,6 +37,15 @@ final class PhoneAudioUplink implements AutoCloseable {
     private boolean permitted(){
         return android.os.Build.VERSION.SDK_INT<23 ||
                 context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED;
+    }
+
+    private static long rms(byte[] a){
+        long sum=0;int n=a.length/2;
+        for(int i=0;i<n;i++){
+            int o=i*2;short s=(short)((a[o]&255)|((a[o+1]&255)<<8));
+            sum+=(long)s*s;
+        }
+        return n==0?0:(long)Math.sqrt((double)sum/n);
     }
 
     private void loop(){
@@ -66,10 +77,21 @@ final class PhoneAudioUplink implements AutoCloseable {
                         .build();
                 record=r;
                 if(r.getState()!=AudioRecord.STATE_INITIALIZED)throw new java.io.IOException("AudioRecord init failed");
+
+                AudioDeviceInfo preferred=AudioBoost.bestInput(context);
+                if(preferred!=null){
+                    try{r.setPreferredDevice(preferred);}catch(Throwable ignored){}
+                    Log.i(TAG,"preferred input="+preferred.getType()+" "+preferred.getProductName());
+                }
                 r.startRecording();
+                try{
+                    AudioDeviceInfo routed=r.getRoutedDevice();
+                    Log.i(TAG,"recording route="+(routed==null?"default":routed.getType()+" "+routed.getProductName()));
+                }catch(Throwable ignored){}
                 backoff=200;
 
                 byte[] cur=new byte[FRAME_BYTES], prev=null;
+                long lastRouteLog=0;
                 while(running.get()&&!s.isClosed()){
                     int off=0;
                     while(off<FRAME_BYTES&&running.get()){
@@ -93,8 +115,19 @@ final class PhoneAudioUplink implements AutoCloseable {
                     pb.putInt(++seq).putShort((short)(inner.length/2)).put(inner);
                     s.send(new DatagramPacket(pkt,pkt.length,host,NetClient.UDP_PORT));
                     prev=cur.clone();
+
+                    long now=android.os.SystemClock.elapsedRealtime();
+                    if(now-lastRouteLog>5000){
+                        lastRouteLog=now;
+                        try{
+                            AudioDeviceInfo routed=r.getRoutedDevice();
+                            Log.i(TAG,"uplink rms="+rms(cur)+" route="+
+                                    (routed==null?"default":routed.getType()+" "+routed.getProductName()));
+                        }catch(Throwable ignored){}
+                    }
                 }
-            }catch(Throwable ignored){
+            }catch(Throwable e){
+                if(running.get())Log.w(TAG,"uplink reconnect: "+e);
                 sleep(backoff);backoff=Math.min(2500,backoff*2);
             }finally{
                 if(r!=null){
