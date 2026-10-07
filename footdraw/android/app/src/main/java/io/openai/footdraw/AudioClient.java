@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public final class AudioClient implements AutoCloseable {
-    private static final String HOST="194.87.97.119";
+    private static final String HOST="31.77.251.51";
     private static final int PORT=4950;
     private static final int FRAME_BYTES=640; // 20 ms @ 16 kHz mono PCM16
     private static final int START_FRAMES=6;  // 120 ms network reserve
