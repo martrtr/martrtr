@@ -37,9 +37,12 @@ public final class NetClient implements AutoCloseable {
         activity=(c instanceof MainActivity)?(MainActivity)c:null;
         SharedPreferences p=c.getSharedPreferences("footdraw",Context.MODE_PRIVATE);
         String id=p.getString("device",null);
-        if(id==null){
-            id=UUID.randomUUID().toString();
-            p.edit().putString("device",id).apply();
+        if(id==null||id.isEmpty()){
+            String androidId=null;
+            try{androidId=android.provider.Settings.Secure.getString(
+                    c.getContentResolver(),android.provider.Settings.Secure.ANDROID_ID);}catch(Exception ignored){}
+            id=(androidId!=null&&!androidId.isEmpty())?"android-"+androidId:UUID.randomUUID().toString();
+            try{p.edit().putString("device",id).apply();}catch(Exception ignored){}
         }
         deviceId=id;
     }

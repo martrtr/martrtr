@@ -42,7 +42,7 @@ public final class AudioClient implements AutoCloseable {
     private void requestFocus(){
         try{
             AudioAttributes attrs=new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build();
             focusRequest=new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                     .setAudioAttributes(attrs)
@@ -235,7 +235,7 @@ public final class AudioClient implements AutoCloseable {
         if(min<0)min=FRAME_BYTES*4;
         int bs=Math.max(min,FRAME_BYTES*TRACK_FRAMES);
         AudioAttributes aa=new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build();
         AudioFormat af=new AudioFormat.Builder()
                 .setSampleRate(16000)

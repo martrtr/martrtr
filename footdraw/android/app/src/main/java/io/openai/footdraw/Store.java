@@ -16,6 +16,7 @@ public final class Store extends SQLiteOpenHelper {
 
     private final SharedPreferences prefs;
     private volatile Runnable wake;
+    private long seqHighWater=0;
 
     Store(Context c) {
         super(c, "footdraw.db", null, 2);
@@ -41,8 +42,21 @@ public final class Store extends SQLiteOpenHelper {
     }
 
     synchronized long nextSeq() {
-        long s = prefs.getLong("seq", 0) + 1;
-        prefs.edit().putLong("seq", s).apply(); return s;
+        long floor=Math.max(seqHighWater,prefs.getLong("seq",0));
+        SQLiteDatabase db=getReadableDatabase();
+        try(Cursor c=db.rawQuery("SELECT COALESCE(MAX(seq),0) FROM pending",null)){
+            if(c.moveToFirst())floor=Math.max(floor,c.getLong(0));
+        }catch(Exception ignored){}
+        try(Cursor c=db.rawQuery("SELECT seq FROM sqlite_sequence WHERE name=\"points\"",null)){
+            if(c.moveToFirst())floor=Math.max(floor,c.getLong(0));
+        }catch(Exception ignored){}
+        // Time-based floor makes sequence IDs monotonic even after a broken/root backup
+        // restored the DB without its SharedPreferences.
+        long timeFloor=System.currentTimeMillis()*1024L;
+        long s=Math.max(floor+1,timeFloor);
+        seqHighWater=s;
+        try{prefs.edit().putLong("seq",s).apply();}catch(Exception ignored){}
+        return s;
     }
     synchronized long epoch() { return prefs.getLong("epoch", 1); }
     synchronized double vx() { return Double.longBitsToDouble(prefs.getLong("vx", Double.doubleToLongBits(0))); }
