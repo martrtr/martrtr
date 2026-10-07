@@ -1,9 +1,11 @@
 package io.openai.footdraw;
 
 import android.app.Activity;
+import android.os.Build;
 import android.os.Process;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
@@ -11,9 +13,22 @@ public final class RootKiosk {
     private volatile boolean active=false;
     private java.lang.Process watchdog;
 
+    private int touchHelperResource() throws IOException {
+        String[] abis=Build.SUPPORTED_ABIS;
+        if(abis!=null){
+            for(String abi:abis){
+                if(abi==null)continue;
+                String a=abi.toLowerCase(java.util.Locale.ROOT);
+                if(a.equals("arm64-v8a"))return R.raw.foot_touch_arm64;
+                if(a.equals("armeabi-v7a")||a.equals("armeabi"))return R.raw.foot_touch_armv7;
+            }
+        }
+        throw new IOException("unsupported ABI: "+java.util.Arrays.toString(abis));
+    }
+
     private File installTouchHelper(Activity a) throws Exception {
         File outFile=new File(a.getFilesDir(),"foot_touch_helper");
-        try(InputStream in=a.getResources().openRawResource(R.raw.foot_touch);
+        try(InputStream in=a.getResources().openRawResource(touchHelperResource());
             FileOutputStream out=new FileOutputStream(outFile,false)){
             byte[] buf=new byte[8192];int n;
             while((n=in.read(buf))>0)out.write(buf,0,n);
@@ -54,13 +69,13 @@ public final class RootKiosk {
                     "settings put secure three_finger_gesture 0 >/dev/null 2>&1; }; "+
                     "footMode(){ "+
                     "if [ -e \"$PALM\" ]; then echo 0 > \"$PALM\" 2>/dev/null || true; fi; "+
-                    "if [ -x \"$HELP\" ]; then "+
+                    "if [ -e /dev/xiaomi-touch ] && [ -x \"$HELP\" ]; then "+
                     "$HELP set 0 1 >/dev/null 2>&1 || true; "+
                     "$HELP set 1 1 >/dev/null 2>&1 || true; "+
                     "$HELP set 2 99 >/dev/null 2>&1 || true; "+
                     "$HELP set 3 5 >/dev/null 2>&1 || true; "+
                     "$HELP set 7 0 >/dev/null 2>&1 || true; fi; }; "+
-                    "restoreMode(){ [ -n \"$2\" ] && [ -x \"$HELP\" ] && $HELP set \"$1\" \"$2\" >/dev/null 2>&1 || true; }; "+
+                    "restoreMode(){ [ -n \"$2\" ] && [ -e /dev/xiaomi-touch ] && [ -x \"$HELP\" ] && $HELP set \"$1\" \"$2\" >/dev/null 2>&1 || true; }; "+
                     "restore(){ "+
                     "if [ \"$G0\" = null ] || [ -z \"$G0\" ]; then settings delete system three_finger_gesture >/dev/null 2>&1; else settings put system three_finger_gesture \"$G0\" >/dev/null 2>&1; fi; "+
                     "if [ \"$G1\" = null ] || [ -z \"$G1\" ]; then settings delete system three_gesture_down >/dev/null 2>&1; else settings put system three_gesture_down \"$G1\" >/dev/null 2>&1; fi; "+
@@ -86,9 +101,6 @@ public final class RootKiosk {
         if(!active)return;
         active=false;
         new Thread(()->{
-            // Do not destroy the root watchdog here: it owns the original touch-mode snapshot.
-            // MainActivity kills the app process shortly after this call; the watchdog notices
-            // /proc/<pid> disappearing, exits its loop and restores every saved Xiaomi touch mode.
             try{new ProcessBuilder("su","-c","cmd statusbar send-disable-flag none; cmd statusbar collapse").start().waitFor();}catch(Exception ignored){}
         },"FootDraw-RootRestore").start();
     }
