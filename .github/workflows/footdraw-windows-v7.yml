@@ -1,62 +1,74 @@
-name: FootDraw Windows v11
+name: FootDraw Unified Operators
 
 on:
   push:
-    branches: [chatgpt/footdraw-build-20260916]
+    branches: [chatgpt/footdraw-unified-20261007]
     paths:
-      - 'footdraw/windows-v7-src.part*'
-      - 'footdraw/windows-v8-*'
-      - 'footdraw/windows-v9_1-*'
-      - 'footdraw/windows-v10-*'
-      - 'footdraw/windows-v11-*'
+      - 'operator/**'
       - '.github/workflows/footdraw-windows-v7.yml'
   workflow_dispatch:
 
 jobs:
   windows:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-python@v5
         with:
-          go-version: '1.23.x'
-      - name: Unpack v7 base
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check PySide6==6.8.3 numpy==2.2.6 sounddevice==0.5.1 pyinstaller==6.16.0 pillow==11.3.0
+      - name: Generate icon
+        shell: bash
+        run: python operator/make_icon.py
+      - name: Build Windows operator
+        shell: bash
+        run: pyinstaller --noconfirm --clean --onefile --windowed --icon operator/icon.ico --name FootDraw-Operator-Windows operator/footdraw_operator.py
+      - name: Verify PE
+        shell: pwsh
         run: |
-          mkdir -p build/windows
-          cat footdraw/windows-v7-src.part00 footdraw/windows-v7-src.part01 footdraw/windows-v7-src.part02 footdraw/windows-v7-src.part03 footdraw/windows-v7-src.part04 | base64 -d | tar xzf - -C build/windows
-      - name: Apply v8 UI and microphone fixes
-        run: |
-          cp footdraw/windows-v8-mic_windows.go build/windows/mic_windows.go
-          cp footdraw/windows-v8-makeico.go build/windows/makeico.go
-          cp footdraw/windows-v8-patch.py build/windows/patch.py
-          cd build/windows
-          python3 patch.py
-          rm patch.py
-          sed -i 's/v<-/v < -/g' mic_windows.go
-      - name: Apply v9.1 audio, v10 gyro and v11 UI patches
-        run: |
-          cp footdraw/windows-v9_1-audio-patch.py build/windows/audio_patch.py
-          cp footdraw/windows-v10-fix.py build/windows/v10_fix.py
-          cp footdraw/windows-v11-patch.py build/windows/v11_patch.py
-          cd build/windows
-          python3 audio_patch.py
-          python3 v10_fix.py
-          python3 v11_patch.py
-          rm audio_patch.py v10_fix.py v11_patch.py
-          gofmt -w main_windows.go mic_windows.go net.go makeico.go
-      - name: Generate shared icon and PE resource
-        working-directory: build/windows
-        run: |
-          go run makeico.go
-          rm makeico.go
-          go install github.com/akavel/rsrc@v0.10.2
-          "$(go env GOPATH)/bin/rsrc" -ico app.ico -o rsrc_windows_amd64.syso
-      - name: Build GUI exe
-        working-directory: build/windows
-        run: |
-          GOOS=windows GOARCH=amd64 go build -ldflags='-H=windowsgui -s -w' -o FootDraw-Operator-v11.exe .
+          if (!(Test-Path dist/FootDraw-Operator-Windows.exe)) { throw "missing exe" }
+          if ((Get-Item dist/FootDraw-Operator-Windows.exe).Length -lt 1000000) { throw "exe too small" }
       - uses: actions/upload-artifact@v4
         with:
-          name: footdraw-windows-v11
-          path: build/windows/FootDraw-Operator-v11.exe
+          name: footdraw-operator-windows
+          path: dist/FootDraw-Operator-Windows.exe
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 portaudio19-dev libxcb-cursor0 libegl1
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check PySide6==6.8.3 numpy==2.2.6 sounddevice==0.5.1 pyinstaller==6.16.0 pillow==11.3.0
+      - name: Generate icon
+        run: python operator/make_icon.py
+      - name: Build Linux operator
+        run: pyinstaller --noconfirm --clean --onefile --name FootDraw-Operator-Linux operator/footdraw_operator.py
+      - name: Smoke-test Linux operator
+        run: |
+          chmod +x dist/FootDraw-Operator-Linux
+          set +e
+          QT_QPA_PLATFORM=offscreen timeout 4s dist/FootDraw-Operator-Linux --host 127.0.0.1 >/tmp/fd-smoke.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/fd-smoke.log
+          test "$rc" = 124 || test "$rc" = 0
+      - name: Build NixOS fallback package
+        run: |
+          mkdir -p nixos-package
+          cp operator/footdraw_operator.py operator/run-linux-nixos.sh operator/icon.png nixos-package/
+          chmod +x nixos-package/run-linux-nixos.sh
+          tar -czf dist/FootDraw-Operator-Linux-NixOS.tar.gz -C nixos-package .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: footdraw-operator-linux
+          path: |
+            dist/FootDraw-Operator-Linux
+            dist/FootDraw-Operator-Linux-NixOS.tar.gz
           if-no-files-found: error
